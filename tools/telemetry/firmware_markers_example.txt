@@ -1,0 +1,20 @@
+Recommended firmware output markers for automatic capture:
+
+=== SHOT TELEMETRY START ===
+# firmware=gaggimate-v3-shadow
+# build=stage01
+# profile=Cremina Lever
+# legend_version=1
+# time_base=ms_since_boot
+# dt_s=0.03
+# raw_p=Raw pressure sensor reading.
+# flt_p=Filtered pressure used by controller.
+# sp_raw=Raw incoming pressure setpoint.
+# sp_flt=Filtered pressure setpoint.
+# sp_recipe=Visual recipe target.
+# sp_ctrl=Conditioned control reference.
+# ctrl_out=Final applied controller output.
+# mpc_u_shadow=Shadow MPC suggested output.
+ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,ctrl_out,mpc_u_shadow
+123,1.23,1.20,0.00,0.00,0.00,0.00,18.2,17.9
+=== SHOT TELEMETRY END ===

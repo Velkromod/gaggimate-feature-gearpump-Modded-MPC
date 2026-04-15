@@ -1,0 +1,50 @@
+{
+  "telemetry_schema_version": 1,
+  "generated_by": "capture_shots.py",
+  "generated_at": "2026-04-15T21:34:35",
+  "shot_started_at": "2026-04-15T21:34:10",
+  "serial": {
+    "port": "/dev/ttyUSB0",
+    "baud": 115200
+  },
+  "shot": {
+    "profile": "Cremina Lever",
+    "rows_written": 412,
+    "data_file": "Cremina_Lever_2026-04-15_21-34-10.csv",
+    "metadata_file": "Cremina_Lever_2026-04-15_21-34-10.metadata.json"
+  },
+  "firmware": {
+    "firmware": "gaggimate-v3-shadow",
+    "build": "stage01",
+    "legend_version": "1",
+    "time_base": "ms_since_boot",
+    "dt_s": 0.03
+  },
+  "channels": {
+    "raw_p": {
+      "unit": "bar",
+      "description": "Raw pressure sensor reading."
+    },
+    "flt_p": {
+      "unit": "bar",
+      "description": "Filtered pressure used by the controller."
+    },
+    "sp_recipe": {
+      "unit": "bar",
+      "description": "Visual recipe reference; ideal profile target."
+    },
+    "sp_ctrl": {
+      "unit": "bar",
+      "description": "Control reference after internal conditioning."
+    },
+    "mpc_u_shadow": {
+      "unit": "%",
+      "description": "Shadow MPC suggested output; not applied."
+    }
+  },
+  "notes": {
+    "profile": "Cremina Lever",
+    "firmware": "gaggimate-v3-shadow",
+    "build": "stage01"
+  }
+}
