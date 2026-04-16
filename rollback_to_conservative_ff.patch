@@ -1,0 +1,25 @@
+diff --git a/lib/NayrodPID/src/PressureController/PressureController.h b/lib/NayrodPID/src/PressureController/PressureController.h
+--- a/lib/NayrodPID/src/PressureController/PressureController.h
++++ b/lib/NayrodPID/src/PressureController/PressureController.h
+@@ -175,14 +175,14 @@
+-    float _feedforwardRampGain = 0.36f;             // Conservative gain to avoid overdriving mid-rise
+-    float _feedforwardDynamicMaxPct = 8.5f;         // Lower cap on dynamic FF contribution
++    float _feedforwardRampGain = 0.34f;             // Conservative gain to avoid overdriving mid-rise
++    float _feedforwardDynamicMaxPct = 8.0f;         // Lower cap on dynamic FF contribution
+     float _feedforwardDynamicFilterFreq = 1.2f;
+-    float _feedforwardDynamicRiseRate = 75.0f;
+-    float _feedforwardDynamicDropRate = 115.0f;
++    float _feedforwardDynamicRiseRate = 70.0f;
++    float _feedforwardDynamicDropRate = 110.0f;
+
+     float _ffPressureGateStartBar = 1.5f;
+-    float _ffPressureGateFullBar = 3.9f;
++    float _ffPressureGateFullBar = 4.0f;
+     float _ffPressureTaperStartBar = 7.4f;
+     float _ffPressureTaperEndBar = 9.0f;
+     float _ffAboveGateStartBar = 0.05f;
+     float _ffAboveGateFullBar = 0.25f;
+-    float _ffGammaBoostMax = 0.18f;      // gamma in [1.0 .. 1.15]
++    float _ffGammaBoostMax = 0.15f;      // gamma in [1.0 .. 1.15]
+     bool _rampHoldEnabled = true;
+     float _rampHoldDropRate = 60.0f;                // %/s, slightly gentler hold than the prior experiment
