@@ -84,9 +84,7 @@ void printShotTelemetryLegend() {
     printf("# mpc_p1_pred = one-step pressure prediction from shadow MPC model\n");
     printf("# mpc_pn_pred = terminal pressure prediction at end of shadow MPC horizon\n");
     printf("# mpc_qout_est = estimated outflow / load used by shadow MPC model\n");
-    printf("# mpc_qout_raw = instantaneous outflow / load estimate before shadow-MPC LPF\n");
     printf("# mpc_residual = measured minus predicted pressure residual for shadow MPC\n");
-    printf("# mpc_residual_bias = low-pass residual bias term added to shadow predictions\n");
     printf("# mpc_cost = shadow MPC objective value\n");
     printf("# power_cmd = floating-point power command sent to pump stage before integer quantization\n");
     printf("# power_psm_quantized = integer power actually sent to PSM\n");
@@ -95,7 +93,7 @@ void printShotTelemetryLegend() {
            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
            "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
-           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
+           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_residual,mpc_cost,"
            "power_cmd,power_psm_quantized,power_quant_residual\n");
 }
 } // namespace
@@ -220,7 +218,7 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%d,%d,%.5f,"
                 "%.2f,%.2f,%.2f,%d,%d,"
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
-                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,"
                 "%.2f,%d,%.4f\n",
                 now,
                 _pressureController.getRawPressure(),
@@ -266,9 +264,7 @@ void DimmedPump::loop() {
                 _pressureController.getMpcShadowPredictedNextPressure(),
                 _pressureController.getMpcShadowPredictedTerminalPressure(),
                 _pressureController.getMpcShadowEstimatedOutflow(),
-                _pressureController.getMpcShadowEstimatedOutflowRaw(),
                 _pressureController.getMpcShadowResidual(),
-                _pressureController.getMpcShadowResidualBias(),
                 _pressureController.getMpcShadowCost(),
 
                 g_lastPowerCommandPct,

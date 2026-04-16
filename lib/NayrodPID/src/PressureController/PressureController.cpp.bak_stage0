@@ -282,20 +282,17 @@ float PressureController::getPressureFeedforwardDynamicUnfiltered(float pressure
 float PressureController::predictPressureOneStep(float pressure, float dutyPct, float estimatedOutflow) const {
     float qAvail = fmaxf(getAvailableFlowAtPressure(std::max(0.0f, pressure)), 1e-3f);
     float pNext = pressure + (_dt / _systemCompliance) * (qAvail * dutyPct * 0.01f - estimatedOutflow);
-    pNext += _mpcShadowResidualBias;
     return std::clamp(pNext, 0.0f, _maxPressure + 1.0f);
 }
 
 void PressureController::resetShadowMpc() {
     _mpcShadowEstimatedOutflow = 0.0f;
-    _mpcShadowEstimatedOutflowRaw = 0.0f;
     _mpcShadowSuggestedOutput = 0.0f;
     _mpcShadowSteadyStateOutput = 0.0f;
     _mpcShadowTrimOutput = 0.0f;
     _mpcShadowPredictedNextPressure = 0.0f;
     _mpcShadowPredictedTerminalPressure = 0.0f;
     _mpcShadowResidual = 0.0f;
-    _mpcShadowResidualBias = 0.0f;
     _mpcShadowCost = 0.0f;
     _mpcShadowPreviousPrediction = 0.0f;
     _mpcShadowPreviousPredictionValid = false;
@@ -317,24 +314,11 @@ void PressureController::updateShadowMpc(float actualOutputPct) {
         _mpcShadowResidual = 0.0f;
     }
 
-    float residualForBias = _mpcShadowResidual;
-    if (fabsf(residualForBias) < _mpcShadowResidualBiasDeadbandBar) {
-        residualForBias = 0.0f;
-    }
-    applyLowPassFilter(&_mpcShadowResidualBias, residualForBias, _mpcShadowResidualBiasFilterFreq, _dt);
-    _mpcShadowResidualBias = std::clamp(
-        _mpcShadowResidualBias, -_mpcShadowResidualBiasLimitBar, _mpcShadowResidualBiasLimitBar);
-
     const float qAvailNow = fmaxf(getAvailableFlowAtPressure(P), 1e-3f);
     const float qPumpActual = qAvailNow * std::clamp(actualOutputPct, 0.0f, 100.0f) * 0.01f;
-    const float clippedPressureDerivative =
-        std::clamp(_filteredPressureDerivative, -_mpcShadowPressureDerivativeClipBarPerSec,
-                   _mpcShadowPressureDerivativeClipBarPerSec);
-    const float qOutInstant = qPumpActual - _systemCompliance * clippedPressureDerivative;
+    const float qOutInstant = qPumpActual - _systemCompliance * _filteredPressureDerivative;
     const float qOutClamped = std::clamp(qOutInstant, 0.0f, qAvailNow * 1.25f);
-    _mpcShadowEstimatedOutflowRaw = qOutClamped;
-    applyLowPassFilter(&_mpcShadowEstimatedOutflow, _mpcShadowEstimatedOutflowRaw, _mpcShadowOutflowFilterFreq,
-                       _dt);
+    applyLowPassFilter(&_mpcShadowEstimatedOutflow, qOutClamped, _mpcShadowOutflowFilterFreq, _dt);
 
     const float qAvailRef = fmaxf(getAvailableFlowAtPressure(std::max(0.0f, P_ref)), 1e-3f);
     const float qDemandRef = std::clamp(_mpcShadowEstimatedOutflow + _systemCompliance * dP_ref, 0.0f, qAvailRef);

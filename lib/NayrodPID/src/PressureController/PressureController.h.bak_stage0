@@ -93,9 +93,7 @@ class PressureController {
     float getMpcShadowPredictedNextPressure() const { return _mpcShadowPredictedNextPressure; }
     float getMpcShadowPredictedTerminalPressure() const { return _mpcShadowPredictedTerminalPressure; }
     float getMpcShadowEstimatedOutflow() const { return _mpcShadowEstimatedOutflow; }
-    float getMpcShadowEstimatedOutflowRaw() const { return _mpcShadowEstimatedOutflowRaw; }
     float getMpcShadowResidual() const { return _mpcShadowResidual; }
-    float getMpcShadowResidualBias() const { return _mpcShadowResidualBias; }
     float getMpcShadowCost() const { return _mpcShadowCost; }
 
     float getErrorIntegral() const { return _errorIntegral; }
@@ -260,24 +258,18 @@ class PressureController {
     float _mpcShadowSteadyStateBlend = 0.45f;
     float _mpcShadowTrimGainPctPerBar = 6.0f;
     float _mpcShadowTrimMaxPct = 5.0f;
-    float _mpcShadowOutflowFilterFreq = 0.65f;
-    float _mpcShadowResidualBiasFilterFreq = 0.25f;
-    float _mpcShadowResidualBiasLimitBar = 0.08f;
-    float _mpcShadowResidualBiasDeadbandBar = 0.003f;
-    float _mpcShadowPressureDerivativeClipBarPerSec = 10.0f;
+    float _mpcShadowOutflowFilterFreq = 0.50f;
     float _mpcShadowPressureWeight = 1.0f;
     float _mpcShadowTerminalWeight = 2.0f;
     float _mpcShadowControlWeight = 0.002f;
 
     float _mpcShadowEstimatedOutflow = 0.0f;
-    float _mpcShadowEstimatedOutflowRaw = 0.0f;
     float _mpcShadowSuggestedOutput = 0.0f;
     float _mpcShadowSteadyStateOutput = 0.0f;
     float _mpcShadowTrimOutput = 0.0f;
     float _mpcShadowPredictedNextPressure = 0.0f;
     float _mpcShadowPredictedTerminalPressure = 0.0f;
     float _mpcShadowResidual = 0.0f;
-    float _mpcShadowResidualBias = 0.0f;
     float _mpcShadowCost = 0.0f;
     float _mpcShadowPreviousPrediction = 0.0f;
     bool _mpcShadowPreviousPredictionValid = false;

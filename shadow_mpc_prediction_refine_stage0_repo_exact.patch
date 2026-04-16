@@ -1,6 +1,8 @@
+diff --git a/lib/NayrodPID/src/PressureController/PressureController.h b/lib/NayrodPID/src/PressureController/PressureController.h
+index 06036df..932b892 100644
 --- a/lib/NayrodPID/src/PressureController/PressureController.h
 +++ b/lib/NayrodPID/src/PressureController/PressureController.h
-@@ -93,7 +93,9 @@
+@@ -93,7 +93,9 @@ class PressureController {
      float getMpcShadowPredictedNextPressure() const { return _mpcShadowPredictedNextPressure; }
      float getMpcShadowPredictedTerminalPressure() const { return _mpcShadowPredictedTerminalPressure; }
      float getMpcShadowEstimatedOutflow() const { return _mpcShadowEstimatedOutflow; }
@@ -10,7 +12,7 @@
      float getMpcShadowCost() const { return _mpcShadowCost; }
  
      float getErrorIntegral() const { return _errorIntegral; }
-@@ -258,18 +260,24 @@
+@@ -258,18 +260,24 @@ class PressureController {
      float _mpcShadowSteadyStateBlend = 0.45f;
      float _mpcShadowTrimGainPctPerBar = 6.0f;
      float _mpcShadowTrimMaxPct = 5.0f;
@@ -36,9 +38,11 @@
      float _mpcShadowCost = 0.0f;
      float _mpcShadowPreviousPrediction = 0.0f;
      bool _mpcShadowPreviousPredictionValid = false;
+diff --git a/lib/NayrodPID/src/PressureController/PressureController.cpp b/lib/NayrodPID/src/PressureController/PressureController.cpp
+index 76d90e6..e06cc4c 100644
 --- a/lib/NayrodPID/src/PressureController/PressureController.cpp
 +++ b/lib/NayrodPID/src/PressureController/PressureController.cpp
-@@ -1,17 +1,20 @@
+@@ -282,17 +282,20 @@ float PressureController::getPressureFeedforwardDynamicUnfiltered(float pressure
  float PressureController::predictPressureOneStep(float pressure, float dutyPct, float estimatedOutflow) const {
      float qAvail = fmaxf(getAvailableFlowAtPressure(std::max(0.0f, pressure)), 1e-3f);
      float pNext = pressure + (_dt / _systemCompliance) * (qAvail * dutyPct * 0.01f - estimatedOutflow);
@@ -59,7 +63,7 @@
      _mpcShadowCost = 0.0f;
      _mpcShadowPreviousPrediction = 0.0f;
      _mpcShadowPreviousPredictionValid = false;
-@@ -33,11 +36,23 @@
+@@ -314,11 +317,24 @@ void PressureController::updateShadowMpc(float actualOutputPct) {
          _mpcShadowResidual = 0.0f;
      }
  
@@ -68,8 +72,8 @@
 +        residualForBias = 0.0f;
 +    }
 +    applyLowPassFilter(&_mpcShadowResidualBias, residualForBias, _mpcShadowResidualBiasFilterFreq, _dt);
-+    _mpcShadowResidualBias =
-+        std::clamp(_mpcShadowResidualBias, -_mpcShadowResidualBiasLimitBar, _mpcShadowResidualBiasLimitBar);
++    _mpcShadowResidualBias = std::clamp(
++        _mpcShadowResidualBias, -_mpcShadowResidualBiasLimitBar, _mpcShadowResidualBiasLimitBar);
 +
      const float qAvailNow = fmaxf(getAvailableFlowAtPressure(P), 1e-3f);
      const float qPumpActual = qAvailNow * std::clamp(actualOutputPct, 0.0f, 100.0f) * 0.01f;
@@ -81,13 +85,16 @@
      const float qOutClamped = std::clamp(qOutInstant, 0.0f, qAvailNow * 1.25f);
 -    applyLowPassFilter(&_mpcShadowEstimatedOutflow, qOutClamped, _mpcShadowOutflowFilterFreq, _dt);
 +    _mpcShadowEstimatedOutflowRaw = qOutClamped;
-+    applyLowPassFilter(&_mpcShadowEstimatedOutflow, _mpcShadowEstimatedOutflowRaw, _mpcShadowOutflowFilterFreq, _dt);
++    applyLowPassFilter(&_mpcShadowEstimatedOutflow, _mpcShadowEstimatedOutflowRaw, _mpcShadowOutflowFilterFreq,
++                       _dt);
  
      const float qAvailRef = fmaxf(getAvailableFlowAtPressure(std::max(0.0f, P_ref)), 1e-3f);
      const float qDemandRef = std::clamp(_mpcShadowEstimatedOutflow + _systemCompliance * dP_ref, 0.0f, qAvailRef);
+diff --git a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+index 9f85b02..05dd7b0 100644
 --- a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
 +++ b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
-@@ -42,7 +42,9 @@
+@@ -84,7 +84,9 @@ void printShotTelemetryLegend() {
      printf("# mpc_p1_pred = one-step pressure prediction from shadow MPC model\n");
      printf("# mpc_pn_pred = terminal pressure prediction at end of shadow MPC horizon\n");
      printf("# mpc_qout_est = estimated outflow / load used by shadow MPC model\n");
@@ -97,7 +104,7 @@
      printf("# mpc_cost = shadow MPC objective value\n");
      printf("# power_cmd = floating-point power command sent to pump stage before integer quantization\n");
      printf("# power_psm_quantized = integer power actually sent to PSM\n");
-@@ -51,6 +53,6 @@
+@@ -93,7 +95,7 @@ void printShotTelemetryLegend() {
             "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
             "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
             "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
@@ -105,14 +112,23 @@
 +           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
             "power_cmd,power_psm_quantized,power_quant_residual\n");
  }
---- a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
-+++ b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
-@@ -1,5 +1,7 @@
+ } // namespace
+@@ -218,7 +220,7 @@ void DimmedPump::loop() {
+                 "%.2f,%.2f,%.2f,%d,%d,%.5f,"
+                 "%.2f,%.2f,%.2f,%d,%d,"
+                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
 -                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,"
 +                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                 "%.2f,%d,%.4f\n",
+                 now,
+                 _pressureController.getRawPressure(),
+@@ -264,7 +266,9 @@ void DimmedPump::loop() {
+                 _pressureController.getMpcShadowPredictedNextPressure(),
                  _pressureController.getMpcShadowPredictedTerminalPressure(),
                  _pressureController.getMpcShadowEstimatedOutflow(),
 +                _pressureController.getMpcShadowEstimatedOutflowRaw(),
                  _pressureController.getMpcShadowResidual(),
 +                _pressureController.getMpcShadowResidualBias(),
                  _pressureController.getMpcShadowCost(),
+ 
+                 g_lastPowerCommandPct,

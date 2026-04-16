@@ -1,0 +1,25 @@
+{
+  "telemetry_schema_version": 1,
+  "generated_by": "capture_shots.py",
+  "generated_at": "2026-04-16T07:30:08",
+  "shot_started_at": "2026-04-16T07:30:08",
+  "serial": {
+    "port": "COM6",
+    "baud": 115200
+  },
+  "shot": {
+    "profile": "Cremina_Lever",
+    "rows_written": 0,
+    "data_file": "Cremina_Lever_2026-04-16_07-30-08.csv",
+    "metadata_file": "Cremina_Lever_2026-04-16_07-30-08.metadata.json"
+  },
+  "firmware": {
+    "firmware": "unknown",
+    "build": "unknown",
+    "legend_version": "unknown",
+    "time_base": "unknown",
+    "dt_s": null
+  },
+  "channels": {},
+  "notes": {}
+}
