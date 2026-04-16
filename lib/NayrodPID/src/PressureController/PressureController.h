@@ -173,35 +173,34 @@ class PressureController {
     float _feedforwardPressureGainPctPerBar = 0.0f; // Hold FF disabled
     float _feedforwardHoldMaxPct = 0.0f;            // Hold FF disabled
 
-    // Dynamic FF tuning - balanced-light step before any MPC authority.
-    // This stays within the validated FF-first path, but gives the mid-rise more help
-    // than the conservative set that is already in this branch.
-    float _feedforwardRampGain = 0.40f;             // Between conservative and full balanced set
-    float _feedforwardDynamicMaxPct = 10.0f;        // Allow a bit more FF authority in mid-rise
-    float _feedforwardDynamicFilterFreq = 1.4f;     // Keep the path smooth while reducing lag
+    // Dynamic FF tuning - conservative recenter after the stronger balanced-light experiment.
+    // Keep the FF-first architecture, but back off authority to recover a cleaner tradeoff.
+    float _feedforwardRampGain = 0.36f;             // Conservative gain to avoid overdriving mid-rise
+    float _feedforwardDynamicMaxPct = 8.5f;         // Lower cap on dynamic FF contribution
+    float _feedforwardDynamicFilterFreq = 1.2f;     // Slightly more filtering to reduce texture
     float _filteredFeedforwardDynamicOutput = 0.0f; // Filtered dynamic FF state
     float _lastFeedforwardDynamicAppliedOutput = 0.0f; // Slew-limited dynamic FF state
 
     // Dedicated slew limiter for the dynamic FF path itself
-    float _feedforwardDynamicRiseRate = 85.0f;  // %/s
-    float _feedforwardDynamicDropRate = 130.0f; // %/s
+    float _feedforwardDynamicRiseRate = 75.0f;  // %/s
+    float _feedforwardDynamicDropRate = 115.0f; // %/s
 
     // Smooth FF pressure window
     float _ffPressureGateStartBar = 1.5f;  // FF starts fading in above this pressure
-    float _ffPressureGateFullBar = 3.8f;   // Reach full authority a bit earlier in the mid-rise
+    float _ffPressureGateFullBar = 3.9f;   // Keep full authority slightly later for a calmer mid-rise
     float _ffPressureTaperStartBar = 7.4f; // FF starts tapering down before the peak
     float _ffPressureTaperEndBar = 9.0f;   // FF reaches zero near the peak
 
     // Above-target shutoff for FF.
     // FF stays active while pressure is below or near target, and fades out only when pressure rises above target.
-    float _ffAboveGateStartBar = 0.03f; // bar above target where FF starts fading out
-    float _ffAboveGateFullBar = 0.18f;  // bar above target where FF is fully shut off
+    float _ffAboveGateStartBar = 0.05f; // bar above target where FF starts fading out
+    float _ffAboveGateFullBar = 0.25f;  // bar above target where FF is fully shut off
 
     // Ramp-dependent gamma boost.
     // This scales FF during genuine rising references to offset premature feedback unloading.
     float _ffRampDerivGateStart = 0.20f; // bar/s where gamma starts ramping in
     float _ffRampDerivGateFull = 0.80f;  // bar/s where gamma reaches full effect
-    float _ffGammaBoostMax = 0.25f;      // gamma in [1.0 .. 1.25]
+    float _ffGammaBoostMax = 0.18f;      // gamma in [1.0 .. 1.15]
 
     // Optional downstream ramp-hold.
     // This does not add new authority; it only prevents the output from falling too fast
@@ -209,7 +208,7 @@ class PressureController {
     bool _rampHoldEnabled = true;
     float _rampHoldDerivativeGateBarPerSec = 0.20f; // Activate only during real upward ramps
     float _rampHoldErrorGateBar = 0.05f;            // Require clear below-target condition
-    float _rampHoldDropRate = 70.0f;                // %/s, much lower than the default drop limiter
+    float _rampHoldDropRate = 60.0f;                // %/s, slightly gentler hold than the prior experiment
 
     // === Controller states ===
     float _previousPressure = 0.0f; // Previous pressure reading (bar)
