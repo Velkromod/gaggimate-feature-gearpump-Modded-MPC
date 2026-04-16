@@ -175,19 +175,19 @@ class PressureController {
 
     // Dynamic FF tuning - conservative recenter after the stronger balanced-light experiment.
     // Keep the FF-first architecture, but back off authority to recover a cleaner tradeoff.
-    float _feedforwardRampGain = 0.36f;             // Conservative gain to avoid overdriving mid-rise
-    float _feedforwardDynamicMaxPct = 8.5f;         // Lower cap on dynamic FF contribution
+    float _feedforwardRampGain = 0.34f;             // Conservative gain to avoid overdriving mid-rise
+    float _feedforwardDynamicMaxPct = 8.0f;         // Lower cap on dynamic FF contribution
     float _feedforwardDynamicFilterFreq = 1.2f;     // Slightly more filtering to reduce texture
     float _filteredFeedforwardDynamicOutput = 0.0f; // Filtered dynamic FF state
     float _lastFeedforwardDynamicAppliedOutput = 0.0f; // Slew-limited dynamic FF state
 
     // Dedicated slew limiter for the dynamic FF path itself
-    float _feedforwardDynamicRiseRate = 75.0f;  // %/s
-    float _feedforwardDynamicDropRate = 115.0f; // %/s
+    float _feedforwardDynamicRiseRate = 70.0f;  // %/s
+    float _feedforwardDynamicDropRate = 110.0f; // %/s
 
     // Smooth FF pressure window
     float _ffPressureGateStartBar = 1.5f;  // FF starts fading in above this pressure
-    float _ffPressureGateFullBar = 3.9f;   // Keep full authority slightly later for a calmer mid-rise
+    float _ffPressureGateFullBar = 4.0f;   // Keep full authority slightly later for a calmer mid-rise
     float _ffPressureTaperStartBar = 7.4f; // FF starts tapering down before the peak
     float _ffPressureTaperEndBar = 9.0f;   // FF reaches zero near the peak
 
