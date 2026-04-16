@@ -1,0 +1,215 @@
+{
+  "telemetry_schema_version": 1,
+  "generated_by": "capture_shots.py",
+  "generated_at": "2026-04-15T19:51:34",
+  "shot_started_at": "2026-04-15T19:50:49",
+  "serial": {
+    "port": "COM6",
+    "baud": 115200
+  },
+  "shot": {
+    "profile": "Cremina_Lever",
+    "rows_written": 352,
+    "data_file": "Cremina_Lever_2026-04-15_19-50-49.csv",
+    "metadata_file": "Cremina_Lever_2026-04-15_19-50-49.metadata.json"
+  },
+  "firmware": {
+    "firmware": "unknown",
+    "build": "unknown",
+    "legend_version": "1",
+    "time_base": "ms_since_boot",
+    "dt_s": null
+  },
+  "channels": {
+    "ms": {
+      "unit": "ms",
+      "description": "Monotonic time since boot or controller startup."
+    },
+    "raw_p": {
+      "unit": "bar",
+      "description": "raw pressure sensor reading"
+    },
+    "flt_p": {
+      "unit": "bar",
+      "description": "filtered pressure used by controller"
+    },
+    "sp_raw": {
+      "unit": "bar",
+      "description": "raw incoming pressure setpoint currently held by the profile engine"
+    },
+    "sp_flt": {
+      "unit": "bar",
+      "description": "filtered pressure setpoint actually used internally by the controller"
+    },
+    "sp_recipe": {
+      "unit": "bar",
+      "description": "visual recipe reference; ideal profile target for display/comparison"
+    },
+    "sp_ctrl": {
+      "unit": "bar",
+      "description": "control reference after internal conditioning; command seen by control logic"
+    },
+    "sp_flt_d": {
+      "unit": "bar/s",
+      "description": "derivative of filtered pressure setpoint"
+    },
+    "ctrl_out": {
+      "unit": "%",
+      "description": "final controller output command in percent"
+    },
+    "pump_duty": {
+      "unit": "ratio",
+      "description": "internal normalized pressure-branch duty estimate"
+    },
+    "pump_flow": {
+      "unit": "ml/s",
+      "description": "estimated pump flow"
+    },
+    "coffee_flow": {
+      "unit": "ml/s",
+      "description": "estimated outflow through puck / coffee flow"
+    },
+    "u_raw": {
+      "unit": "%",
+      "description": "pressure branch output after clamp and before final slew limiter"
+    },
+    "u_applied": {
+      "unit": "%",
+      "description": "pressure branch output after final slew limiter"
+    },
+    "u_delta": {
+      "unit": "%",
+      "description": "u_raw - u_applied; limiter intervention magnitude"
+    },
+    "limiter_active_up": {
+      "unit": "bool",
+      "description": "1 when rise slew limiter is active"
+    },
+    "limiter_active_down": {
+      "unit": "bool",
+      "description": "1 when drop slew limiter is active"
+    },
+    "error_integral": {
+      "unit": "controller_state",
+      "description": "integral state of legacy pressure controller"
+    },
+    "u_unclamped_raw": {
+      "unit": "%",
+      "description": "controller output before 0..100 clamp"
+    },
+    "u_clamped_raw": {
+      "unit": "%",
+      "description": "controller output after 0..100 clamp and before slew limiter"
+    },
+    "u_clamp_delta": {
+      "unit": "%",
+      "description": "u_unclamped_raw - u_clamped_raw"
+    },
+    "clamp_active_high": {
+      "unit": "bool",
+      "description": "1 when output was clipped by upper clamp"
+    },
+    "clamp_active_low": {
+      "unit": "bool",
+      "description": "1 when output was clipped by lower clamp"
+    },
+    "u_fb": {
+      "unit": "%",
+      "description": "legacy pressure feedback contribution"
+    },
+    "u_ff_hold": {
+      "unit": "%",
+      "description": "static feedforward contribution"
+    },
+    "u_ff_dyn": {
+      "unit": "%",
+      "description": "dynamic feedforward contribution"
+    },
+    "u_ff_dyn_raw": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "ff_pressure_w": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "ff_above_w": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "ff_gamma": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "u_ff_total": {
+      "unit": "%",
+      "description": "total feedforward contribution"
+    },
+    "ramp_hold_active": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "drop_rate_active": {
+      "unit": "unknown",
+      "description": "No description captured for this channel."
+    },
+    "mpc_shadow_enabled": {
+      "unit": "bool",
+      "description": "1 when shadow MPC is being computed in parallel"
+    },
+    "mpc_u_shadow": {
+      "unit": "%",
+      "description": "total output suggested by shadow MPC; not applied to actuator in shadow stage"
+    },
+    "mpc_u_ss": {
+      "unit": "%",
+      "description": "steady-state component suggested by shadow MPC"
+    },
+    "mpc_u_trim": {
+      "unit": "%",
+      "description": "corrective trim component suggested by shadow MPC"
+    },
+    "mpc_p1_pred": {
+      "unit": "bar",
+      "description": "one-step pressure prediction from shadow MPC model"
+    },
+    "mpc_pn_pred": {
+      "unit": "bar",
+      "description": "terminal pressure prediction at end of shadow MPC horizon"
+    },
+    "mpc_qout_est": {
+      "unit": "ml/s",
+      "description": "estimated outflow / load used by shadow MPC model"
+    },
+    "mpc_residual": {
+      "unit": "bar",
+      "description": "measured minus predicted pressure residual for shadow MPC"
+    },
+    "mpc_cost": {
+      "unit": "objective",
+      "description": "shadow MPC objective value"
+    },
+    "power_cmd": {
+      "unit": "%",
+      "description": "floating-point power command sent to pump stage before integer quantization"
+    },
+    "power_psm_quantized": {
+      "unit": "%",
+      "description": "integer power actually sent to PSM"
+    },
+    "power_quant_residual": {
+      "unit": "%",
+      "description": "sigma-delta residual kept for next quantization step"
+    }
+  },
+  "notes": {
+    "legend_version": "1",
+    "time_base": "ms_since_boot",
+    "u_ff_dyn_raw": "raw dynamic feedforward request before FF-path LPF and slew limiting",
+    "ff_pressure_w": "pressure-window weight applied to dynamic FF",
+    "ff_above_w": "above-target suppression weight applied to dynamic FF",
+    "ff_gamma": "ramp-dependent gamma multiplier applied to dynamic FF",
+    "ramp_hold_active": "1 when the downstream drop-rate hold is active during ramp-up",
+    "drop_rate_active": "active downstream output drop-rate cap in percent per second"
+  }
+}
