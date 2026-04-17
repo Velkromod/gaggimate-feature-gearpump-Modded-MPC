@@ -178,7 +178,7 @@ class PressureController {
     // Dynamic FF tuning - conservative recenter after the stronger balanced-light experiment.
     // Keep the FF-first architecture, but back off authority to recover a cleaner tradeoff.
     float _feedforwardRampGain = 0.34f;             // Conservative gain to avoid overdriving mid-rise
-    float _feedforwardDynamicMaxPct = 8.0f;         // Lower cap on dynamic FF contribution
+    float _feedforwardDynamicMaxPct = 8.5f;         // Slightly higher cap to avoid FF ceiling in mid-rise
     float _feedforwardDynamicFilterFreq = 1.2f;     // Slightly more filtering to reduce texture
     float _filteredFeedforwardDynamicOutput = 0.0f; // Filtered dynamic FF state
     float _lastFeedforwardDynamicAppliedOutput = 0.0f; // Slew-limited dynamic FF state
@@ -188,21 +188,21 @@ class PressureController {
     float _feedforwardDynamicDropRate = 110.0f; // %/s
 
     // Smooth FF pressure window
-    float _ffPressureGateStartBar = 1.5f;  // FF starts fading in above this pressure
-    float _ffPressureGateFullBar = 4.0f;   // Keep full authority slightly later for a calmer mid-rise
-    float _ffPressureTaperStartBar = 7.4f; // FF starts tapering down before the peak
+    float _ffPressureGateStartBar = 1.3f;  // Start FF a bit earlier to support the lower mid-rise
+    float _ffPressureGateFullBar = 3.7f;   // Reach full FF authority slightly earlier in the ramp
+    float _ffPressureTaperStartBar = 7.2f; // Begin taper slightly earlier to stay cleaner near the crest
     float _ffPressureTaperEndBar = 9.0f;   // FF reaches zero near the peak
 
     // Above-target shutoff for FF.
     // FF stays active while pressure is below or near target, and fades out only when pressure rises above target.
     float _ffAboveGateStartBar = 0.05f; // bar above target where FF starts fading out
-    float _ffAboveGateFullBar = 0.25f;  // bar above target where FF is fully shut off
+    float _ffAboveGateFullBar = 0.22f;  // shut FF off a bit sooner once pressure moves above target
 
     // Ramp-dependent gamma boost.
     // This scales FF during genuine rising references to offset premature feedback unloading.
     float _ffRampDerivGateStart = 0.20f; // bar/s where gamma starts ramping in
     float _ffRampDerivGateFull = 0.80f;  // bar/s where gamma reaches full effect
-    float _ffGammaBoostMax = 0.18f;      // gamma in [1.0 .. 1.15]
+    float _ffGammaBoostMax = 0.16f;      // slightly lower gamma to avoid roughness while preserving drive
 
     // Optional downstream ramp-hold.
     // This does not add new authority; it only prevents the output from falling too fast
