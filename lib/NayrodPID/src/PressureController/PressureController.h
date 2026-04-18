@@ -178,7 +178,7 @@ class PressureController {
     // Dynamic FF tuning - conservative recenter after the stronger balanced-light experiment.
     // Keep the FF-first architecture, but back off authority to recover a cleaner tradeoff.
     float _feedforwardRampGain = 0.34f;             // Conservative gain to avoid overdriving mid-rise
-    float _feedforwardDynamicMaxPct = 8.2f;         // Slightly lower cap to keep mid-rise help while reducing roughness
+    float _feedforwardDynamicMaxPct = 8.5f;         // Slightly higher cap to avoid FF ceiling in mid-rise
     float _feedforwardDynamicFilterFreq = 1.2f;     // Slightly more filtering to reduce texture
     float _filteredFeedforwardDynamicOutput = 0.0f; // Filtered dynamic FF state
     float _lastFeedforwardDynamicAppliedOutput = 0.0f; // Slew-limited dynamic FF state
@@ -190,19 +190,19 @@ class PressureController {
     // Smooth FF pressure window
     float _ffPressureGateStartBar = 1.3f;  // Start FF a bit earlier to support the lower mid-rise
     float _ffPressureGateFullBar = 3.7f;   // Reach full FF authority slightly earlier in the ramp
-    float _ffPressureTaperStartBar = 7.0f; // Taper a touch earlier to calm the crest and late-rise texture
+    float _ffPressureTaperStartBar = 7.2f; // Begin taper slightly earlier to stay cleaner near the crest
     float _ffPressureTaperEndBar = 9.0f;   // FF reaches zero near the peak
 
     // Above-target shutoff for FF.
     // FF stays active while pressure is below or near target, and fades out only when pressure rises above target.
     float _ffAboveGateStartBar = 0.05f; // bar above target where FF starts fading out
-    float _ffAboveGateFullBar = 0.20f;  // shut FF off a bit sooner once pressure rises above target
+    float _ffAboveGateFullBar = 0.22f;  // shut FF off a bit sooner once pressure moves above target
 
     // Ramp-dependent gamma boost.
     // This scales FF during genuine rising references to offset premature feedback unloading.
     float _ffRampDerivGateStart = 0.20f; // bar/s where gamma starts ramping in
     float _ffRampDerivGateFull = 0.80f;  // bar/s where gamma reaches full effect
-    float _ffGammaBoostMax = 0.14f;      // lower gamma to reduce rise roughness with puck-load variability
+    float _ffGammaBoostMax = 0.16f;      // slightly lower gamma to avoid roughness while preserving drive
 
     // Optional downstream ramp-hold.
     // This does not add new authority; it only prevents the output from falling too fast
@@ -260,11 +260,11 @@ class PressureController {
     float _mpcShadowSteadyStateBlend = 0.45f;
     float _mpcShadowTrimGainPctPerBar = 6.0f;
     float _mpcShadowTrimMaxPct = 5.0f;
-    float _mpcShadowOutflowFilterFreq = 0.55f;
-    float _mpcShadowResidualBiasFilterFreq = 0.18f;
-    float _mpcShadowResidualBiasLimitBar = 0.06f;
+    float _mpcShadowOutflowFilterFreq = 0.65f;
+    float _mpcShadowResidualBiasFilterFreq = 0.25f;
+    float _mpcShadowResidualBiasLimitBar = 0.08f;
     float _mpcShadowResidualBiasDeadbandBar = 0.003f;
-    float _mpcShadowPressureDerivativeClipBarPerSec = 8.0f;
+    float _mpcShadowPressureDerivativeClipBarPerSec = 10.0f;
     float _mpcShadowPressureWeight = 1.0f;
     float _mpcShadowTerminalWeight = 2.0f;
     float _mpcShadowControlWeight = 0.002f;
