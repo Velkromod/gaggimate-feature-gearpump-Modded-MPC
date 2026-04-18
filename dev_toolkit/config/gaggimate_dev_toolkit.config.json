@@ -1,0 +1,11 @@
+{
+  "ui": {
+    "last_patch": "ff_recenter_and_shadow_observer_tune_repo_current.patch"
+  },
+  "telemetry": {
+    "baud": "115200",
+    "outdir": ".\\shots",
+    "profile": "Cremina_Lever",
+    "com_port": "COM6"
+  }
+}
