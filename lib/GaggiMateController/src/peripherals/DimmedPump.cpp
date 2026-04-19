@@ -193,6 +193,9 @@ void DimmedPump::setup() {
         tachoConfig.timeoutUs = 300000;
         tachoConfig.minPeriodUs = 120;
         tachoConfig.emaAlpha = 0.20f;
+        tachoConfig.enableHardwareGlitchFilter = true;
+        tachoConfig.maxStepUpRatio = 2.20f;
+        tachoConfig.minStepDownRatio = 0.45f;
 
         if (_tach.begin(tachoConfig)) {
             ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);

@@ -1,6 +1,0 @@
-[2026-04-19 15:19:15] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
-[2026-04-19 15:27:19] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
-[2026-04-19 15:27:45] [WARN] Serial probe failed for COM6: NOT_PRESENT:
-[2026-04-19 15:27:45] [ERROR] El puerto COM6 no esta listo para captura. Puertos detectados ahora: (ninguno)
-[2026-04-19 15:32:36] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
-[2026-04-19 15:32:36] [INFO] Serial probe OK for COM6

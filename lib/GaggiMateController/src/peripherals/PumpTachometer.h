@@ -7,6 +7,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 
+// Newer ESP-IDF releases expose a dedicated GPIO glitch filter API.
+// Keep the include optional so the tach feature still builds on older
+// Arduino/ESP-IDF combinations used by this repository.
+#if __has_include(<driver/gpio_filter.h>)
+#include <driver/gpio_filter.h>
+#define PUMP_TACH_HAS_GPIO_FILTER 1
+#else
+#define PUMP_TACH_HAS_GPIO_FILTER 0
+#endif
+
 class PumpTachometer {
   public:
     struct Config {
@@ -15,6 +25,9 @@ class PumpTachometer {
         uint32_t timeoutUs = 300000;
         uint32_t minPeriodUs = 120;
         float emaAlpha = 0.20f;
+        bool enableHardwareGlitchFilter = true;
+        float maxStepUpRatio = 2.20f;
+        float minStepDownRatio = 0.45f;
     };
 
     struct Sample {
@@ -36,10 +49,14 @@ class PumpTachometer {
     bool isEnabled() const { return _enabled; }
 
   private:
-    // The ISR only timestamps edges and stores the minimum amount of data needed
-    // to compute RPM later from the task context.
+    static constexpr size_t PERIOD_HISTORY_SIZE = 5;
+
+    // The ISR is intentionally tiny: timestamp the edge, reject obviously
+    // impossible pulses, then store the accepted period into a short history.
     static void IRAM_ATTR isrThunk(void *arg);
     void IRAM_ATTR onEdgeIsr();
+
+    static uint32_t computeMedianPeriod(const uint32_t *values, size_t count);
 
     Config _config{};
     Sample _sample{};
@@ -51,6 +68,15 @@ class PumpTachometer {
     volatile uint32_t _lastPeriodUs = 0;
     volatile uint32_t _pulseCount = 0;
     volatile uint32_t _glitchRejects = 0;
+    volatile uint32_t _periodHistory[PERIOD_HISTORY_SIZE] = {0};
+    volatile uint8_t _periodHistoryIndex = 0;
+    volatile uint8_t _periodHistoryCount = 0;
+
+    uint32_t _softwareRejects = 0;
+
+#if PUMP_TACH_HAS_GPIO_FILTER
+    gpio_glitch_filter_handle_t _glitchFilter = nullptr;
+#endif
 };
 
 #endif // PUMPTACHOMETER_H

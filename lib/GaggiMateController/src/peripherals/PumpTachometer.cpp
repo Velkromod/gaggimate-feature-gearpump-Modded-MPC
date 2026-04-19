@@ -25,6 +25,18 @@ bool PumpTachometer::begin(const Config &config) {
         return false;
     }
 
+#if PUMP_TACH_HAS_GPIO_FILTER
+    if (_config.enableHardwareGlitchFilter) {
+        gpio_pin_glitch_filter_config_t filterConfig = {
+            .gpio_num = static_cast<gpio_num_t>(_config.pin),
+        };
+
+        if (gpio_new_pin_glitch_filter(&filterConfig, &_glitchFilter) == ESP_OK) {
+            gpio_glitch_filter_enable(_glitchFilter);
+        }
+    }
+#endif
+
     // The ISR service may already be installed by another module. Treat that as
     // success and only fail on unexpected errors.
     esp_err_t err = gpio_install_isr_service(0);
@@ -49,8 +61,14 @@ void PumpTachometer::reset() {
     _lastPeriodUs = 0;
     _pulseCount = 0;
     _glitchRejects = 0;
+    _periodHistoryIndex = 0;
+    _periodHistoryCount = 0;
+    for (size_t i = 0; i < PERIOD_HISTORY_SIZE; ++i) {
+        _periodHistory[i] = 0;
+    }
     portEXIT_CRITICAL(&_mux);
 
+    _softwareRejects = 0;
     _sample = {};
 }
 
@@ -75,12 +93,31 @@ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
         }
 
         _lastPeriodUs = dtUs;
+        _periodHistory[_periodHistoryIndex] = dtUs;
+        _periodHistoryIndex = static_cast<uint8_t>((_periodHistoryIndex + 1) % PERIOD_HISTORY_SIZE);
+        if (_periodHistoryCount < PERIOD_HISTORY_SIZE) {
+            _periodHistoryCount++;
+        }
     }
 
     _lastEdgeUs = nowUs;
     _pulseCount++;
 
     portEXIT_CRITICAL_ISR(&_mux);
+}
+
+uint32_t PumpTachometer::computeMedianPeriod(const uint32_t *values, size_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
+    uint32_t scratch[PERIOD_HISTORY_SIZE] = {0};
+    for (size_t i = 0; i < count; ++i) {
+        scratch[i] = values[i];
+    }
+
+    std::sort(scratch, scratch + count);
+    return scratch[count / 2];
 }
 
 void PumpTachometer::update() {
@@ -93,19 +130,25 @@ void PumpTachometer::update() {
     uint32_t lastPeriodUs = 0;
     uint32_t pulseCount = 0;
     uint32_t glitchRejects = 0;
+    uint32_t periodHistory[PERIOD_HISTORY_SIZE] = {0};
+    uint8_t periodHistoryCount = 0;
 
     portENTER_CRITICAL(&_mux);
     lastEdgeUs = _lastEdgeUs;
     lastPeriodUs = _lastPeriodUs;
     pulseCount = _pulseCount;
     glitchRejects = _glitchRejects;
+    periodHistoryCount = _periodHistoryCount;
+    for (size_t i = 0; i < PERIOD_HISTORY_SIZE; ++i) {
+        periodHistory[i] = _periodHistory[i];
+    }
     portEXIT_CRITICAL(&_mux);
 
-    _sample.periodUs = lastPeriodUs;
     _sample.pulseCount = pulseCount;
-    _sample.glitchRejects = glitchRejects;
+    _sample.glitchRejects = glitchRejects + _softwareRejects;
 
-    if (lastEdgeUs == 0 || lastPeriodUs == 0) {
+    if (lastEdgeUs == 0 || lastPeriodUs == 0 || periodHistoryCount == 0) {
+        _sample.periodUs = 0;
         _sample.timedOut = true;
         _sample.rpmInst = 0.0f;
         _sample.rpmEma = 0.0f;
@@ -115,14 +158,29 @@ void PumpTachometer::update() {
     const int64_t nowUs = esp_timer_get_time();
     if ((nowUs - lastEdgeUs) > _config.timeoutUs) {
         // Report zero RPM once the pulse train disappears.
+        _sample.periodUs = 0;
         _sample.timedOut = true;
         _sample.rpmInst = 0.0f;
         _sample.rpmEma = 0.0f;
         return;
     }
 
+    uint32_t candidatePeriodUs = computeMedianPeriod(periodHistory, periodHistoryCount);
+
+    // Reject abrupt single-update jumps that are much larger than the last
+    // reported value. Median filtering already removes isolated spikes, and this
+    // plausibility gate catches the remaining occasional missed/extra periods.
+    if (_sample.periodUs > 0 && candidatePeriodUs > 0) {
+        const float ratio = static_cast<float>(candidatePeriodUs) / static_cast<float>(_sample.periodUs);
+        if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
+            candidatePeriodUs = _sample.periodUs;
+            _softwareRejects++;
+        }
+    }
+
+    _sample.periodUs = candidatePeriodUs;
     _sample.timedOut = false;
-    _sample.rpmInst = 60000000.0f / (_config.pulsesPerRevolution * static_cast<float>(lastPeriodUs));
+    _sample.rpmInst = 60000000.0f / (_config.pulsesPerRevolution * static_cast<float>(candidatePeriodUs));
 
     if (_sample.rpmEma <= 0.0f) {
         _sample.rpmEma = _sample.rpmInst;

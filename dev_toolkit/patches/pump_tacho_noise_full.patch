@@ -1,0 +1,1251 @@
+diff -ruN gm_orig/docs/telemetry.md gm_mod/docs/telemetry.md
+--- gm_orig/docs/telemetry.md	2026-04-15 21:37:10.000000000 +0000
++++ gm_mod/docs/telemetry.md	2026-04-19 21:12:55.170151140 +0000
+@@ -27,6 +27,14 @@
+ 
+ The metadata sidecar is the source of truth for channel descriptions and shot context.
+ 
++The tachometer channels are exposed as:
++- `tach_period_us`: filtered time between accepted tach pulses in microseconds
++- `tach_rpm_inst`: instantaneous RPM derived from `tach_period_us`
++- `tach_rpm_ema`: exponentially filtered RPM for easier visual inspection
++- `tach_pulse_count`: total accepted tach pulse count since the last reset
++- `tach_glitch_rejects`: pulses rejected by ISR deglitching or software plausibility checks
++- `tach_timeout`: becomes `1` when RPM is forced to zero because no recent pulse is available
++
+ ## Recommended workflow
+ 
+ 1. Run the firmware with serial telemetry enabled.
+diff -ruN gm_orig/lib/GaggiMateController/src/ControllerConfig.h gm_mod/lib/GaggiMateController/src/ControllerConfig.h
+--- gm_orig/lib/GaggiMateController/src/ControllerConfig.h	2026-04-15 21:37:10.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/ControllerConfig.h	2026-04-19 21:13:19.244793720 +0000
+@@ -20,6 +20,8 @@
+     uint8_t heaterPin;
+     uint8_t pumpPin;
+     uint8_t pumpSensePin = 0;
++    // Optional tachometer input used to observe pump speed via RPM pulses.
++    uint8_t pumpTachoPin = 0;
+     uint8_t pumpOn;
+     uint8_t valvePin;
+     uint8_t valveOn;
+@@ -119,6 +121,7 @@
+                                         .heaterPin = 14,
+                                         .pumpPin = 9,
+                                         .pumpSensePin = 21,
++                                        .pumpTachoPin = 12,
+                                         .pumpOn = 1,
+                                         .valvePin = 10,
+                                         .valveOn = 1,
+@@ -154,6 +157,7 @@
+                                       .heaterPin = 14,
+                                       .pumpPin = 9,
+                                       .pumpSensePin = 21,
++                                      .pumpTachoPin = 12,
+                                       .pumpOn = 1,
+                                       .valvePin = 10,
+                                       .valveOn = 1,
+@@ -189,6 +193,7 @@
+                                         .heaterPin = 14,
+                                         .pumpPin = 9,
+                                         .pumpSensePin = 21,
++                                        .pumpTachoPin = 12,
+                                         .pumpOn = 1,
+                                         .valvePin = 10,
+                                         .valveOn = 1,
+diff -ruN gm_orig/lib/GaggiMateController/src/GaggiMateController.cpp gm_mod/lib/GaggiMateController/src/GaggiMateController.cpp
+--- gm_orig/lib/GaggiMateController/src/GaggiMateController.cpp	2026-04-15 21:37:10.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/GaggiMateController.cpp	2026-04-19 21:12:55.166497982 +0000
+@@ -33,7 +33,7 @@
+         pressureSensor = new PressureSensor(_config.pressureSda, _config.pressureScl, [this](float pressure) { /* noop */ });
+     }
+     if (_config.capabilites.dimming) {
+-        pump = new DimmedPump(_config.pumpPin, _config.pumpSensePin, pressureSensor, _config.ext2Pin, _config.ext3Pin);
++        pump = new DimmedPump(_config.pumpPin, _config.pumpSensePin, pressureSensor, _config.ext2Pin, _config.ext3Pin, _config.pumpTachoPin);
+     } else {
+         pump = new SimplePump(_config.pumpPin, _config.pumpOn, _config.capabilites.ssrPump ? 1000.0f : 5000.0f);
+     }
+diff -ruN gm_orig/lib/GaggiMateController/src/peripherals/DimmedPump.cpp gm_mod/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+--- gm_orig/lib/GaggiMateController/src/peripherals/DimmedPump.cpp	2026-04-16 22:41:20.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/peripherals/DimmedPump.cpp	2026-04-19 21:12:55.168393726 +0000
+@@ -1,361 +1,401 @@
+-#include "DimmedPump.h"
+-
+-#include <ExtensionIOXL9555.hpp>
+-#include <GaggiMateController.h>
+-
+-#include <algorithm>
+-#include <cmath>
+-
+-#define MCP_VOLTAGE 5.0f
+-
+-static ExtensionIOXL9555 extension;
+-
+-char swTxBuffer[128];
+-char swRxBuffer[128];
+-
+-// Effective output-resolution improvement for the integer-only _psm.set():
+-// first-order error-diffusion / sigma-delta temporal dithering.
+-// This keeps the instantaneous command integer, but preserves fractional power on average.
+-namespace {
+-float g_powerQuantizationResidual = 0.0f;
+-float g_lastPowerCommandPct = 0.0f;
+-int g_lastQuantizedPowerPct = 0;
+-
+-int quantizePumpPowerForPSM(float desiredPowerPct) {
+-    float desired = std::clamp(desiredPowerPct, 0.0f, 100.0f);
+-    g_lastPowerCommandPct = desired;
+-
+-    float shaped = desired + g_powerQuantizationResidual;
+-    int quantized = static_cast<int>(std::lround(shaped));
+-    quantized = std::clamp(quantized, 0, 100);
+-
+-    g_powerQuantizationResidual = shaped - static_cast<float>(quantized);
+-
+-    // Avoid carrying useless residual at hard rails.
+-    if ((quantized == 0 && desired <= 0.0f) || (quantized == 100 && desired >= 100.0f)) {
+-        g_powerQuantizationResidual = 0.0f;
+-    }
+-
+-    g_lastQuantizedPowerPct = quantized;
+-    return quantized;
+-}
+-
+-void printShotTelemetryLegend() {
+-    printf("# SHOT START\n");
+-    printf("# legend_version=1\n");
+-    printf("# time_base=ms_since_boot\n");
+-    printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
+-    printf("# raw_p = raw pressure sensor reading\n");
+-    printf("# flt_p = filtered pressure used by controller\n");
+-    printf("# sp_raw = raw incoming pressure setpoint currently held by the profile engine\n");
+-    printf("# sp_flt = filtered pressure setpoint actually used internally by the controller\n");
+-    printf("# sp_recipe = visual recipe reference; ideal profile target for display/comparison\n");
+-    printf("# sp_ctrl = control reference after internal conditioning; command seen by control logic\n");
+-    printf("# sp_flt_d = derivative of filtered pressure setpoint\n");
+-    printf("# ctrl_out = final controller output command in percent\n");
+-    printf("# pump_duty = internal normalized pressure-branch duty estimate\n");
+-    printf("# pump_flow = estimated pump flow\n");
+-    printf("# coffee_flow = estimated outflow through puck / coffee flow\n");
+-    printf("# u_raw = pressure branch output after clamp and before final slew limiter\n");
+-    printf("# u_applied = pressure branch output after final slew limiter\n");
+-    printf("# u_delta = u_raw - u_applied; limiter intervention magnitude\n");
+-    printf("# limiter_active_up = 1 when rise slew limiter is active\n");
+-    printf("# limiter_active_down = 1 when drop slew limiter is active\n");
+-    printf("# error_integral = integral state of legacy pressure controller\n");
+-    printf("# u_unclamped_raw = controller output before 0..100 clamp\n");
+-    printf("# u_clamped_raw = controller output after 0..100 clamp and before slew limiter\n");
+-    printf("# u_clamp_delta = u_unclamped_raw - u_clamped_raw\n");
+-    printf("# clamp_active_high = 1 when output was clipped by upper clamp\n");
+-    printf("# clamp_active_low = 1 when output was clipped by lower clamp\n");
+-    printf("# u_fb = legacy pressure feedback contribution\n");
+-    printf("# u_ff_hold = static feedforward contribution\n");
+-    printf("# u_ff_dyn = dynamic feedforward contribution\n");
+-    printf("# u_ff_dyn_raw = raw dynamic feedforward request before FF-path LPF and slew limiting\n");
+-    printf("# ff_pressure_w = pressure-window weight applied to dynamic FF\n");
+-    printf("# ff_above_w = above-target suppression weight applied to dynamic FF\n");
+-    printf("# ff_gamma = ramp-dependent gamma multiplier applied to dynamic FF\n");
+-    printf("# u_ff_total = total feedforward contribution\n");
+-    printf("# ramp_hold_active = 1 when the downstream drop-rate hold is active during ramp-up\n");
+-    printf("# drop_rate_active = active downstream output drop-rate cap in percent per second\n");
+-    printf("# mpc_shadow_enabled = 1 when shadow MPC is being computed in parallel\n");
+-    printf("# mpc_u_shadow = total output suggested by shadow MPC; not applied to actuator in shadow stage\n");
+-    printf("# mpc_u_ss = steady-state component suggested by shadow MPC\n");
+-    printf("# mpc_u_trim = corrective trim component suggested by shadow MPC\n");
+-    printf("# mpc_p1_pred = one-step pressure prediction from shadow MPC model\n");
+-    printf("# mpc_pn_pred = terminal pressure prediction at end of shadow MPC horizon\n");
+-    printf("# mpc_qout_est = estimated outflow / load used by shadow MPC model\n");
+-    printf("# mpc_qout_raw = instantaneous outflow / load estimate before shadow-MPC LPF\n");
+-    printf("# mpc_residual = measured minus predicted pressure residual for shadow MPC\n");
+-    printf("# mpc_residual_bias = low-pass residual bias term added to shadow predictions\n");
+-    printf("# mpc_cost = shadow MPC objective value\n");
+-    printf("# power_cmd = floating-point power command sent to pump stage before integer quantization\n");
+-    printf("# power_psm_quantized = integer power actually sent to PSM\n");
+-    printf("# power_quant_residual = sigma-delta residual kept for next quantization step\n");
+-    printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
+-           "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
+-           "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
+-           "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
+-           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
+-           "power_cmd,power_psm_quantized,power_quant_residual\n");
+-}
+-} // namespace
+-
+-uint8_t read_scl(const SoftWire *i2c) {
+-    uint8_t value = extension.digitalRead(ExtensionIOXL9555::IO0);
+-    ESP_LOGV("MCP4725", "Read SCL: %d", value);
+-    return value;
+-}
+-
+-uint8_t read_sda(const SoftWire *i2c) {
+-    uint8_t value = extension.digitalRead(ExtensionIOXL9555::IO1);
+-    ESP_LOGV("MCP4725", "Read SDA: %d", value);
+-    return value;
+-}
+-
+-void scl_high(const SoftWire *i2c) {
+-    extension.pinMode(ExtensionIOXL9555::IO0, INPUT);
+-    ESP_LOGV("MCP4725", "Release SCL");
+-}
+-
+-void sda_high(const SoftWire *i2c) {
+-    extension.pinMode(ExtensionIOXL9555::IO1, INPUT);
+-    ESP_LOGV("MCP4725", "Release SDA");
+-}
+-
+-void scl_low(const SoftWire *i2c) {
+-    extension.pinMode(ExtensionIOXL9555::IO0, OUTPUT);
+-    extension.digitalWrite(ExtensionIOXL9555::IO0, LOW);
+-    ESP_LOGV("MCP4725", "Write SCL: %d", 0);
+-}
+-
+-void sda_low(const SoftWire *i2c) {
+-    extension.pinMode(ExtensionIOXL9555::IO1, OUTPUT);
+-    extension.digitalWrite(ExtensionIOXL9555::IO1, LOW);
+-    ESP_LOGV("MCP4725", "Write SDA: %d", 0);
+-}
+-
+-DimmedPump::DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressure_sensor, uint8_t scl_pin, uint8_t sda_pin)
+-    : _ssr_pin(ssr_pin),
+-      _sense_pin(sense_pin),
+-      _psm(_sense_pin, _ssr_pin, 100, FALLING, 2, 4),
+-      _pressureSensor(pressure_sensor),
+-      _pressureController(0.03f, &_ctrlPressure, &_ctrlFlow, &_currentPressure, &_controllerPower, &_valveStatus) {
+-    _psm.set(0);
+-
+-    if (!extension.init(Wire, sda_pin, scl_pin, XL9555_UNKOWN_ADDRESS)) {
+-        ESP_LOGE(LOG_TAG, "Failed to initialize extension I2C bus");
+-    } else {
+-        ESP_LOGI(LOG_TAG, "Initialized extension");
+-        extension.setClock(1000000L);
+-
+-        i2c = new SoftWire(0, 0);
+-        i2c->setTxBuffer(swTxBuffer, sizeof(swTxBuffer));
+-        i2c->setRxBuffer(swRxBuffer, sizeof(swRxBuffer));
+-        i2c->setReadScl(read_scl);
+-        i2c->setReadSda(read_sda);
+-        i2c->setSetSclHigh(scl_high);
+-        i2c->setSetSdaHigh(sda_high);
+-        i2c->setSetSclLow(scl_low);
+-        i2c->setSetSdaLow(sda_low);
+-        i2c->setTimeout_ms(200);
+-        i2c->setDelay_us(20);
+-        i2c->begin();
+-
+-        delay(500);
+-
+-        mcp = new MCP4725(0x60, i2c);
+-        if (!mcp->begin()) {
+-            ESP_LOGE(LOG_TAG, "Failed to initialize MCP4725");
+-        } else {
+-            ESP_LOGI(LOG_TAG, "MCP4725 initialized");
+-            mcp->setMaxVoltage(MCP_VOLTAGE);
+-            mcp->setPercentage(0);
+-        }
+-    }
+-}
+-
+-void DimmedPump::setup() {
+-    _cps = _psm.cps();
+-    if (_cps > 70) {
+-        _cps = _cps / 2;
+-    }
+-
+-    ESP_LOGI(LOG_TAG, "CSV debug logging enabled");
+-
+-    xTaskCreate(loopTask, "DimmedPump::loop", configMINIMAL_STACK_SIZE * 4, this, 1, &taskHandle);
+-}
+-
+-void DimmedPump::loop() {
+-    _currentPressure = _pressureSensor->getRawPressure();
+-    updatePower();
+-    _currentFlow = _pressureController.getPumpFlowRate();
+-
+-    bool shotActive =
+-        _debugLogEnabled &&
+-        (_mode != ControlMode::POWER) &&
+-        (_ctrlPressure > 0.2f || _ctrlFlow > 0.05f);
+-
+-    if (shotActive && !_telemetryShotActive) {
+-        _telemetryShotActive = true;
+-        _lastDebugLogMs = 0;
+-
+-        printf("=== SHOT TELEMETRY START ===\n");
+-        printShotTelemetryLegend();
+-        fflush(stdout);
+-    }
+-
+-    if (!shotActive && _telemetryShotActive) {
+-        printf("=== SHOT TELEMETRY END ===\n");
+-        fflush(stdout);
+-        _telemetryShotActive = false;
+-    }
+-
+-    if (shotActive) {
+-        uint32_t now = millis();
+-        if (now - _lastDebugLogMs >= 100) {
+-            _lastDebugLogMs = now;
+-
+-            printf(
+-                "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.4f,%.3f,%.3f,"
+-                "%.2f,%.2f,%.2f,%d,%d,%.5f,"
+-                "%.2f,%.2f,%.2f,%d,%d,"
+-                "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
+-                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+-                "%.2f,%d,%.4f\n",
+-                now,
+-                _pressureController.getRawPressure(),
+-                _pressureController.getFilteredPressure(),
+-                _pressureController.getRawPressureSetpoint(),
+-                _pressureController.getFilteredPressureSetpoint(),
+-                _pressureController.getRecipePressureSetpoint(),
+-                _pressureController.getControlPressureSetpoint(),
+-                _pressureController.getFilteredSetpointDerivative(),
+-                _pressureController.getControlOutput(),
+-                _pressureController.getPumpDutyCycleInternal(),
+-                _pressureController.getPumpFlowRate(),
+-                _pressureController.getCoffeeFlowRate(),
+-
+-                _pressureController.getRawPressureControlOutput(),
+-                _pressureController.getAppliedPressureControlOutput(),
+-                _pressureController.getPressureLimiterDelta(),
+-                _pressureController.isPressureLimiterActiveUp() ? 1 : 0,
+-                _pressureController.isPressureLimiterActiveDown() ? 1 : 0,
+-                _pressureController.getErrorIntegral(),
+-
+-                _pressureController.getUnclampedPressureControlOutput(),
+-                _pressureController.getClampedPressureControlOutput(),
+-                _pressureController.getPressureClampDelta(),
+-                _pressureController.isPressureClampActiveHigh() ? 1 : 0,
+-                _pressureController.isPressureClampActiveLow() ? 1 : 0,
+-
+-                _pressureController.getPressureFeedbackOutput(),
+-                _pressureController.getPressureFeedforwardHoldOutput(),
+-                _pressureController.getPressureFeedforwardDynamicOutput(),
+-                _pressureController.getPressureFeedforwardDynamicRawRequest(),
+-                _pressureController.getPressureFeedforwardPressureWeight(),
+-                _pressureController.getPressureFeedforwardAboveWeight(),
+-                _pressureController.getPressureFeedforwardGamma(),
+-                _pressureController.getPressureFeedforwardTotalOutput(),
+-                _pressureController.isRampHoldActive() ? 1 : 0,
+-                _pressureController.getPressureDropRateActive(),
+-
+-                _pressureController.isMpcShadowEnabled() ? 1 : 0,
+-                _pressureController.getMpcShadowSuggestedOutput(),
+-                _pressureController.getMpcShadowSteadyStateOutput(),
+-                _pressureController.getMpcShadowTrimOutput(),
+-                _pressureController.getMpcShadowPredictedNextPressure(),
+-                _pressureController.getMpcShadowPredictedTerminalPressure(),
+-                _pressureController.getMpcShadowEstimatedOutflow(),
+-                _pressureController.getMpcShadowEstimatedOutflowRaw(),
+-                _pressureController.getMpcShadowResidual(),
+-                _pressureController.getMpcShadowResidualBias(),
+-                _pressureController.getMpcShadowCost(),
+-
+-                g_lastPowerCommandPct,
+-                g_lastQuantizedPowerPct,
+-                g_powerQuantizationResidual
+-            );
+-            fflush(stdout);
+-        }
+-    }
+-}
+-
+-void DimmedPump::setPower(float setpoint) {
+-    ESP_LOGV(LOG_TAG, "Setting power to %2f", setpoint);
+-    _ctrlPressure = setpoint > 0 ? 20.0f : 0.0f;
+-    _mode = ControlMode::POWER;
+-    _power = std::clamp(setpoint, 0.0f, 100.0f);
+-    _controllerPower = _power; // Feed manual control back into pressure controller
+-
+-    if (_power == 0.0f) {
+-        _currentFlow = 0.0f;
+-    }
+-
+-    int quantizedPower = quantizePumpPowerForPSM(_power);
+-    _psm.set(quantizedPower);
+-
+-    // Keep full float resolution on DAC side.
+-    mcp->setVoltage(MCP_VOLTAGE * _power / 100.0f);
+-}
+-
+-float DimmedPump::getCoffeeVolume() { return _pressureController.getCoffeeOutputEstimate(); }
+-
+-float DimmedPump::getPumpFlow() { return _currentFlow; }
+-
+-float DimmedPump::getPuckFlow() { return _pressureController.getCoffeeFlowRate(); }
+-
+-float DimmedPump::getPuckResistance() { return _pressureController.getPuckResistance(); }
+-
+-void DimmedPump::tare() {
+-    _pressureController.tare();
+-    _pressureController.reset();
+-    g_powerQuantizationResidual = 0.0f;
+-}
+-
+-void DimmedPump::loopTask(void *arg) {
+-    auto *pump = static_cast<DimmedPump *>(arg);
+-    TickType_t lastWake = xTaskGetTickCount();
+-
+-    while (true) {
+-        pump->loop();
+-        xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(30));
+-    }
+-}
+-
+-void DimmedPump::updatePower() {
+-    _pressureController.update(static_cast<PressureController::ControlMode>(_mode));
+-
+-    if (_mode != ControlMode::POWER) {
+-        _power = _controllerPower;
+-    }
+-
+-    int quantizedPower = quantizePumpPowerForPSM(_power);
+-    _psm.set(quantizedPower);
+-
+-    // Keep DAC at full float resolution.
+-    mcp->setVoltage(MCP_VOLTAGE * _power / 100.0f);
+-}
+-
+-void DimmedPump::setFlowTarget(float targetFlow, float pressureLimit) {
+-    _mode = ControlMode::FLOW;
+-    _ctrlFlow = targetFlow;
+-    _ctrlPressure = pressureLimit;
+-    _pressureController.setPressureLimit(pressureLimit);
+-}
+-
+-void DimmedPump::setPressureTarget(float targetPressure, float flowLimit) {
+-    _mode = ControlMode::PRESSURE;
+-    _ctrlFlow = flowLimit;
+-    _ctrlPressure = targetPressure;
+-    _pressureController.setFlowLimit(flowLimit);
+-}
+-
+-void DimmedPump::setValveState(bool open) { _valveStatus = open; }
+-
+-void DimmedPump::setPumpFlowCoeff(float oneBarFlow, float nineBarFlow) {
+-    _pressureController.setPumpFlowCoeff(oneBarFlow, nineBarFlow);
+-}
+-
+-void DimmedPump::setPumpFlowPolyCoeffs(float a, float b, float c, float d) {
+-    _pressureController.setPumpFlowPolyCoeffs(a, b, c, d);
+-}
++#include "DimmedPump.h"
++
++#include <ExtensionIOXL9555.hpp>
++#include <GaggiMateController.h>
++
++#include <algorithm>
++#include <cmath>
++
++#define MCP_VOLTAGE 5.0f
++
++static ExtensionIOXL9555 extension;
++
++char swTxBuffer[128];
++char swRxBuffer[128];
++
++// Effective output-resolution improvement for the integer-only _psm.set():
++// first-order error-diffusion / sigma-delta temporal dithering.
++// This keeps the instantaneous command integer, but preserves fractional power on average.
++namespace {
++float g_powerQuantizationResidual = 0.0f;
++float g_lastPowerCommandPct = 0.0f;
++int g_lastQuantizedPowerPct = 0;
++
++int quantizePumpPowerForPSM(float desiredPowerPct) {
++    float desired = std::clamp(desiredPowerPct, 0.0f, 100.0f);
++    g_lastPowerCommandPct = desired;
++
++    float shaped = desired + g_powerQuantizationResidual;
++    int quantized = static_cast<int>(std::lround(shaped));
++    quantized = std::clamp(quantized, 0, 100);
++
++    g_powerQuantizationResidual = shaped - static_cast<float>(quantized);
++
++    // Avoid carrying useless residual at hard rails.
++    if ((quantized == 0 && desired <= 0.0f) || (quantized == 100 && desired >= 100.0f)) {
++        g_powerQuantizationResidual = 0.0f;
++    }
++
++    g_lastQuantizedPowerPct = quantized;
++    return quantized;
++}
++
++void printShotTelemetryLegend() {
++    printf("# SHOT START\n");
++    printf("# legend_version=2\n");
++    printf("# time_base=ms_since_boot\n");
++    printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
++    printf("# raw_p = raw pressure sensor reading\n");
++    printf("# flt_p = filtered pressure used by controller\n");
++    printf("# sp_raw = raw incoming pressure setpoint currently held by the profile engine\n");
++    printf("# sp_flt = filtered pressure setpoint actually used internally by the controller\n");
++    printf("# sp_recipe = visual recipe reference; ideal profile target for display/comparison\n");
++    printf("# sp_ctrl = control reference after internal conditioning; command seen by control logic\n");
++    printf("# sp_flt_d = derivative of filtered pressure setpoint\n");
++    printf("# ctrl_out = final controller output command in percent\n");
++    printf("# pump_duty = internal normalized pressure-branch duty estimate\n");
++    printf("# pump_flow = estimated pump flow\n");
++    printf("# coffee_flow = estimated outflow through puck / coffee flow\n");
++    printf("# u_raw = pressure branch output after clamp and before final slew limiter\n");
++    printf("# u_applied = pressure branch output after final slew limiter\n");
++    printf("# u_delta = u_raw - u_applied; limiter intervention magnitude\n");
++    printf("# limiter_active_up = 1 when rise slew limiter is active\n");
++    printf("# limiter_active_down = 1 when drop slew limiter is active\n");
++    printf("# error_integral = integral state of legacy pressure controller\n");
++    printf("# u_unclamped_raw = controller output before 0..100 clamp\n");
++    printf("# u_clamped_raw = controller output after 0..100 clamp and before slew limiter\n");
++    printf("# u_clamp_delta = u_unclamped_raw - u_clamped_raw\n");
++    printf("# clamp_active_high = 1 when output was clipped by upper clamp\n");
++    printf("# clamp_active_low = 1 when output was clipped by lower clamp\n");
++    printf("# u_fb = legacy pressure feedback contribution\n");
++    printf("# u_ff_hold = static feedforward contribution\n");
++    printf("# u_ff_dyn = dynamic feedforward contribution\n");
++    printf("# u_ff_dyn_raw = raw dynamic feedforward request before FF-path LPF and slew limiting\n");
++    printf("# ff_pressure_w = pressure-window weight applied to dynamic FF\n");
++    printf("# ff_above_w = above-target suppression weight applied to dynamic FF\n");
++    printf("# ff_gamma = ramp-dependent gamma multiplier applied to dynamic FF\n");
++    printf("# u_ff_total = total feedforward contribution\n");
++    printf("# ramp_hold_active = 1 when the downstream drop-rate hold is active during ramp-up\n");
++    printf("# drop_rate_active = active downstream output drop-rate cap in percent per second\n");
++    printf("# mpc_shadow_enabled = 1 when shadow MPC is being computed in parallel\n");
++    printf("# mpc_u_shadow = total output suggested by shadow MPC; not applied to actuator in shadow stage\n");
++    printf("# mpc_u_ss = steady-state component suggested by shadow MPC\n");
++    printf("# mpc_u_trim = corrective trim component suggested by shadow MPC\n");
++    printf("# mpc_p1_pred = one-step pressure prediction from shadow MPC model\n");
++    printf("# mpc_pn_pred = terminal pressure prediction at end of shadow MPC horizon\n");
++    printf("# mpc_qout_est = estimated outflow / load used by shadow MPC model\n");
++    printf("# mpc_qout_raw = instantaneous outflow / load estimate before shadow-MPC LPF\n");
++    printf("# mpc_residual = measured minus predicted pressure residual for shadow MPC\n");
++    printf("# mpc_residual_bias = low-pass residual bias term added to shadow predictions\n");
++    printf("# mpc_cost = shadow MPC objective value\n");
++    printf("# power_cmd = floating-point power command sent to pump stage before integer quantization\n");
++    printf("# power_psm_quantized = integer power actually sent to PSM\n");
++    printf("# power_quant_residual = sigma-delta residual kept for next quantization step\n");
++    printf("# tach_period_us = filtered time between accepted tach pulses in microseconds\n");
++    printf("# tach_rpm_inst = instantaneous RPM derived from filtered tach_period_us\n");
++    printf("# tach_rpm_ema = exponentially filtered RPM intended for easier visual analysis\n");
++    printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
++    printf("# tach_glitch_rejects = total tach edges rejected by ISR deglitching or software plausibility checks\n");
++    printf("# tach_timeout = 1 when no recent tach pulse is available and RPM is forced to zero\n");
++    printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
++           "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
++           "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
++           "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
++           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
++           "power_cmd,power_psm_quantized,power_quant_residual,"
++           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_pulse_count,tach_glitch_rejects,tach_timeout\n");
++}
++} // namespace
++
++uint8_t read_scl(const SoftWire *i2c) {
++    uint8_t value = extension.digitalRead(ExtensionIOXL9555::IO0);
++    ESP_LOGV("MCP4725", "Read SCL: %d", value);
++    return value;
++}
++
++uint8_t read_sda(const SoftWire *i2c) {
++    uint8_t value = extension.digitalRead(ExtensionIOXL9555::IO1);
++    ESP_LOGV("MCP4725", "Read SDA: %d", value);
++    return value;
++}
++
++void scl_high(const SoftWire *i2c) {
++    extension.pinMode(ExtensionIOXL9555::IO0, INPUT);
++    ESP_LOGV("MCP4725", "Release SCL");
++}
++
++void sda_high(const SoftWire *i2c) {
++    extension.pinMode(ExtensionIOXL9555::IO1, INPUT);
++    ESP_LOGV("MCP4725", "Release SDA");
++}
++
++void scl_low(const SoftWire *i2c) {
++    extension.pinMode(ExtensionIOXL9555::IO0, OUTPUT);
++    extension.digitalWrite(ExtensionIOXL9555::IO0, LOW);
++    ESP_LOGV("MCP4725", "Write SCL: %d", 0);
++}
++
++void sda_low(const SoftWire *i2c) {
++    extension.pinMode(ExtensionIOXL9555::IO1, OUTPUT);
++    extension.digitalWrite(ExtensionIOXL9555::IO1, LOW);
++    ESP_LOGV("MCP4725", "Write SDA: %d", 0);
++}
++
++DimmedPump::DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressure_sensor, uint8_t scl_pin, uint8_t sda_pin, uint8_t tacho_pin)
++    : _ssr_pin(ssr_pin),
++      _sense_pin(sense_pin),
++      _tachoPin(tacho_pin),
++      _psm(_sense_pin, _ssr_pin, 100, FALLING, 2, 4),
++      _pressureSensor(pressure_sensor),
++      _pressureController(0.03f, &_ctrlPressure, &_ctrlFlow, &_currentPressure, &_controllerPower, &_valveStatus) {
++    _psm.set(0);
++
++    if (!extension.init(Wire, sda_pin, scl_pin, XL9555_UNKOWN_ADDRESS)) {
++        ESP_LOGE(LOG_TAG, "Failed to initialize extension I2C bus");
++    } else {
++        ESP_LOGI(LOG_TAG, "Initialized extension");
++        extension.setClock(1000000L);
++
++        i2c = new SoftWire(0, 0);
++        i2c->setTxBuffer(swTxBuffer, sizeof(swTxBuffer));
++        i2c->setRxBuffer(swRxBuffer, sizeof(swRxBuffer));
++        i2c->setReadScl(read_scl);
++        i2c->setReadSda(read_sda);
++        i2c->setSetSclHigh(scl_high);
++        i2c->setSetSdaHigh(sda_high);
++        i2c->setSetSclLow(scl_low);
++        i2c->setSetSdaLow(sda_low);
++        i2c->setTimeout_ms(200);
++        i2c->setDelay_us(20);
++        i2c->begin();
++
++        delay(500);
++
++        mcp = new MCP4725(0x60, i2c);
++        if (!mcp->begin()) {
++            ESP_LOGE(LOG_TAG, "Failed to initialize MCP4725");
++        } else {
++            ESP_LOGI(LOG_TAG, "MCP4725 initialized");
++            mcp->setMaxVoltage(MCP_VOLTAGE);
++            mcp->setPercentage(0);
++        }
++    }
++}
++
++void DimmedPump::setup() {
++    _cps = _psm.cps();
++    if (_cps > 70) {
++        _cps = _cps / 2;
++    }
++
++    ESP_LOGI(LOG_TAG, "CSV debug logging enabled");
++
++    if (_tachoPin != 0) {
++        PumpTachometer::Config tachCfg;
++        tachCfg.pin = static_cast<gpio_num_t>(_tachoPin);
++        tachCfg.pulsesPerRevolution = 2.0f;
++        tachCfg.timeoutUs = 300000;
++        tachCfg.minPeriodUs = 120;
++        tachCfg.emaAlpha = 0.20f;
++        tachCfg.enablePinGlitchFilter = true;
++
++        _tachEnabled = _tach.begin(tachCfg);
++        if (_tachEnabled) {
++            ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);
++        } else {
++            ESP_LOGW(LOG_TAG, "Pump tachometer not available on GPIO %u", _tachoPin);
++        }
++    }
++
++    xTaskCreate(loopTask, "DimmedPump::loop", configMINIMAL_STACK_SIZE * 4, this, 1, &taskHandle);
++}
++
++void DimmedPump::loop() {
++    _currentPressure = _pressureSensor->getRawPressure();
++    updatePower();
++    _currentFlow = _pressureController.getPumpFlowRate();
++
++    PumpTachometer::Sample tachSample{};
++    if (_tachEnabled) {
++        _tach.update();
++        tachSample = _tach.sample();
++    }
++
++    bool shotActive =
++        _debugLogEnabled &&
++        (_mode != ControlMode::POWER) &&
++        (_ctrlPressure > 0.2f || _ctrlFlow > 0.05f);
++
++    if (shotActive && !_telemetryShotActive) {
++        _telemetryShotActive = true;
++        _lastDebugLogMs = 0;
++
++        printf("=== SHOT TELEMETRY START ===\n");
++        printShotTelemetryLegend();
++        fflush(stdout);
++    }
++
++    if (!shotActive && _telemetryShotActive) {
++        printf("=== SHOT TELEMETRY END ===\n");
++        fflush(stdout);
++        _telemetryShotActive = false;
++    }
++
++    if (shotActive) {
++        uint32_t now = millis();
++        if (now - _lastDebugLogMs >= 100) {
++            _lastDebugLogMs = now;
++
++            printf(
++                "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.4f,%.3f,%.3f,"
++                "%.2f,%.2f,%.2f,%d,%d,%.5f,"
++                "%.2f,%.2f,%.2f,%d,%d,"
++                "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
++                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
++                "%.2f,%d,%.4f,%u,%.2f,%.2f,%u,%u,%d\n",
++                now,
++                _pressureController.getRawPressure(),
++                _pressureController.getFilteredPressure(),
++                _pressureController.getRawPressureSetpoint(),
++                _pressureController.getFilteredPressureSetpoint(),
++                _pressureController.getRecipePressureSetpoint(),
++                _pressureController.getControlPressureSetpoint(),
++                _pressureController.getFilteredSetpointDerivative(),
++                _pressureController.getControlOutput(),
++                _pressureController.getPumpDutyCycleInternal(),
++                _pressureController.getPumpFlowRate(),
++                _pressureController.getCoffeeFlowRate(),
++
++                _pressureController.getRawPressureControlOutput(),
++                _pressureController.getAppliedPressureControlOutput(),
++                _pressureController.getPressureLimiterDelta(),
++                _pressureController.isPressureLimiterActiveUp() ? 1 : 0,
++                _pressureController.isPressureLimiterActiveDown() ? 1 : 0,
++                _pressureController.getErrorIntegral(),
++
++                _pressureController.getUnclampedPressureControlOutput(),
++                _pressureController.getClampedPressureControlOutput(),
++                _pressureController.getPressureClampDelta(),
++                _pressureController.isPressureClampActiveHigh() ? 1 : 0,
++                _pressureController.isPressureClampActiveLow() ? 1 : 0,
++
++                _pressureController.getPressureFeedbackOutput(),
++                _pressureController.getPressureFeedforwardHoldOutput(),
++                _pressureController.getPressureFeedforwardDynamicOutput(),
++                _pressureController.getPressureFeedforwardDynamicRawRequest(),
++                _pressureController.getPressureFeedforwardPressureWeight(),
++                _pressureController.getPressureFeedforwardAboveWeight(),
++                _pressureController.getPressureFeedforwardGamma(),
++                _pressureController.getPressureFeedforwardTotalOutput(),
++                _pressureController.isRampHoldActive() ? 1 : 0,
++                _pressureController.getPressureDropRateActive(),
++
++                _pressureController.isMpcShadowEnabled() ? 1 : 0,
++                _pressureController.getMpcShadowSuggestedOutput(),
++                _pressureController.getMpcShadowSteadyStateOutput(),
++                _pressureController.getMpcShadowTrimOutput(),
++                _pressureController.getMpcShadowPredictedNextPressure(),
++                _pressureController.getMpcShadowPredictedTerminalPressure(),
++                _pressureController.getMpcShadowEstimatedOutflow(),
++                _pressureController.getMpcShadowEstimatedOutflowRaw(),
++                _pressureController.getMpcShadowResidual(),
++                _pressureController.getMpcShadowResidualBias(),
++                _pressureController.getMpcShadowCost(),
++
++                g_lastPowerCommandPct,
++                g_lastQuantizedPowerPct,
++                g_powerQuantizationResidual,
++                tachSample.periodUs,
++                tachSample.rpmInst,
++                tachSample.rpmEma,
++                tachSample.pulseCount,
++                tachSample.glitchRejects,
++                tachSample.timedOut ? 1 : 0
++            );
++            fflush(stdout);
++        }
++    }
++}
++
++void DimmedPump::setPower(float setpoint) {
++    ESP_LOGV(LOG_TAG, "Setting power to %2f", setpoint);
++    _ctrlPressure = setpoint > 0 ? 20.0f : 0.0f;
++    _mode = ControlMode::POWER;
++    _power = std::clamp(setpoint, 0.0f, 100.0f);
++    _controllerPower = _power; // Feed manual control back into pressure controller
++
++    if (_power == 0.0f) {
++        _currentFlow = 0.0f;
++    }
++
++    int quantizedPower = quantizePumpPowerForPSM(_power);
++    _psm.set(quantizedPower);
++
++    // Keep full float resolution on DAC side.
++    mcp->setVoltage(MCP_VOLTAGE * _power / 100.0f);
++}
++
++float DimmedPump::getCoffeeVolume() { return _pressureController.getCoffeeOutputEstimate(); }
++
++float DimmedPump::getPumpFlow() { return _currentFlow; }
++
++float DimmedPump::getPuckFlow() { return _pressureController.getCoffeeFlowRate(); }
++
++float DimmedPump::getPuckResistance() { return _pressureController.getPuckResistance(); }
++
++void DimmedPump::tare() {
++    _pressureController.tare();
++    _pressureController.reset();
++    g_powerQuantizationResidual = 0.0f;
++    if (_tachEnabled) {
++        _tach.reset();
++    }
++}
++
++void DimmedPump::loopTask(void *arg) {
++    auto *pump = static_cast<DimmedPump *>(arg);
++    TickType_t lastWake = xTaskGetTickCount();
++
++    while (true) {
++        pump->loop();
++        xTaskDelayUntil(&lastWake, pdMS_TO_TICKS(30));
++    }
++}
++
++void DimmedPump::updatePower() {
++    _pressureController.update(static_cast<PressureController::ControlMode>(_mode));
++
++    if (_mode != ControlMode::POWER) {
++        _power = _controllerPower;
++    }
++
++    int quantizedPower = quantizePumpPowerForPSM(_power);
++    _psm.set(quantizedPower);
++
++    // Keep DAC at full float resolution.
++    mcp->setVoltage(MCP_VOLTAGE * _power / 100.0f);
++}
++
++void DimmedPump::setFlowTarget(float targetFlow, float pressureLimit) {
++    _mode = ControlMode::FLOW;
++    _ctrlFlow = targetFlow;
++    _ctrlPressure = pressureLimit;
++    _pressureController.setPressureLimit(pressureLimit);
++}
++
++void DimmedPump::setPressureTarget(float targetPressure, float flowLimit) {
++    _mode = ControlMode::PRESSURE;
++    _ctrlFlow = flowLimit;
++    _ctrlPressure = targetPressure;
++    _pressureController.setFlowLimit(flowLimit);
++}
++
++void DimmedPump::setValveState(bool open) { _valveStatus = open; }
++
++void DimmedPump::setPumpFlowCoeff(float oneBarFlow, float nineBarFlow) {
++    _pressureController.setPumpFlowCoeff(oneBarFlow, nineBarFlow);
++}
++
++void DimmedPump::setPumpFlowPolyCoeffs(float a, float b, float c, float d) {
++    _pressureController.setPumpFlowPolyCoeffs(a, b, c, d);
++}
+diff -ruN gm_orig/lib/GaggiMateController/src/peripherals/DimmedPump.h gm_mod/lib/GaggiMateController/src/peripherals/DimmedPump.h
+--- gm_orig/lib/GaggiMateController/src/peripherals/DimmedPump.h	2026-04-15 21:37:10.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/peripherals/DimmedPump.h	2026-04-19 21:12:55.167448790 +0000
+@@ -1,78 +1,82 @@
+-#ifndef DIMMEDPUMP_H
+-#define DIMMEDPUMP_H
+-#include "MCP4725.h"
+-#include "PSM.h"
+-#include "PressureController/PressureController.h"
+-#include "PressureSensor.h"
+-#include "Pump.h"
+-#include <Arduino.h>
+-#include <SoftWire.h>
+-
+-class DimmedPump : public Pump {
+-  public:
+-    enum class ControlMode { POWER, PRESSURE, FLOW };
+-
+-    DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressureSensor, uint8_t sclPin, uint8_t sdaPin);
+-    ~DimmedPump() = default;
+-
+-    void setup() override;
+-    void loop() override;
+-    void setPower(float setpoint) override;
+-
+-    float getCoffeeVolume();
+-    float getPumpFlow();
+-    float getPuckFlow();
+-    float getPuckResistance();
+-    float *getPumpFlowPtr() { return &_currentFlow; }  // For thermal feedforward
+-    int *getValveStatusPtr() { return &_valveStatus; } // For thermal feedforward valve state
+-    void tare();
+-
+-    void setFlowTarget(float targetFlow, float pressureLimit);
+-    void setPressureTarget(float targetPressure, float flowLimit);
+-    void setPumpFlowCoeff(float oneBarFlow, float nineBarFlow);
+-    void setPumpFlowPolyCoeffs(float a, float b, float c, float d);
+-    void stop();
+-    void fullPower();
+-    void setValveState(bool open);
+-
+-  private:
+-    uint8_t _ssr_pin;
+-    uint8_t _sense_pin;
+-    PSM _psm;
+-    PressureSensor *_pressureSensor;
+-    PressureController _pressureController;
+-    SoftWire *i2c;
+-    MCP4725 *mcp;
+-
+-    xTaskHandle taskHandle;
+-
+-    ControlMode _mode = ControlMode::POWER;
+-    float _power = 0.0f;
+-    float _controllerPower = 0.0f;
+-    float _ctrlPressure = 0.0f;
+-    float _ctrlFlow = 0.0f;
+-    float _currentPressure = 0.0f;
+-    float _currentFlow = 0.0f;
+-    float _lastPressure = 0.0f;
+-    int _valveStatus = 0;
+-    int _cps = MAX_FREQ;
+-
+-    float _opvPressure = 0.0f;
+-
+-    // Debug logging
+-    uint32_t _lastDebugLogMs = 0;
+-    bool _debugLogEnabled = true;
+-    bool _telemetryShotActive = false;
+-
+-    static constexpr float BASE_FLOW_RATE = 0.25f;
+-    static constexpr float MAX_PRESSURE = 15.0f;
+-    static constexpr float MAX_FREQ = 60.0f;
+-
+-    void updatePower();
+-    void onPressureUpdate(float pressure);
+-
+-    const char *LOG_TAG = "DimmedPump";
+-    static void loopTask(void *arg);
+-};
+-
+-#endif // DIMMEDPUMP_H
++#ifndef DIMMEDPUMP_H
++#define DIMMEDPUMP_H
++#include "MCP4725.h"
++#include "PSM.h"
++#include "PressureController/PressureController.h"
++#include "PressureSensor.h"
++#include "PumpTachometer.h"
++#include "Pump.h"
++#include <Arduino.h>
++#include <SoftWire.h>
++
++class DimmedPump : public Pump {
++  public:
++    enum class ControlMode { POWER, PRESSURE, FLOW };
++
++    DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressureSensor, uint8_t sclPin, uint8_t sdaPin, uint8_t tachoPin);
++    ~DimmedPump() = default;
++
++    void setup() override;
++    void loop() override;
++    void setPower(float setpoint) override;
++
++    float getCoffeeVolume();
++    float getPumpFlow();
++    float getPuckFlow();
++    float getPuckResistance();
++    float *getPumpFlowPtr() { return &_currentFlow; }  // For thermal feedforward
++    int *getValveStatusPtr() { return &_valveStatus; } // For thermal feedforward valve state
++    void tare();
++
++    void setFlowTarget(float targetFlow, float pressureLimit);
++    void setPressureTarget(float targetPressure, float flowLimit);
++    void setPumpFlowCoeff(float oneBarFlow, float nineBarFlow);
++    void setPumpFlowPolyCoeffs(float a, float b, float c, float d);
++    void stop();
++    void fullPower();
++    void setValveState(bool open);
++
++  private:
++    uint8_t _ssr_pin;
++    uint8_t _sense_pin;
++    uint8_t _tachoPin;
++    PSM _psm;
++    PressureSensor *_pressureSensor;
++    PressureController _pressureController;
++    SoftWire *i2c;
++    MCP4725 *mcp;
++    PumpTachometer _tach;
++    bool _tachEnabled = false;
++
++    xTaskHandle taskHandle;
++
++    ControlMode _mode = ControlMode::POWER;
++    float _power = 0.0f;
++    float _controllerPower = 0.0f;
++    float _ctrlPressure = 0.0f;
++    float _ctrlFlow = 0.0f;
++    float _currentPressure = 0.0f;
++    float _currentFlow = 0.0f;
++    float _lastPressure = 0.0f;
++    int _valveStatus = 0;
++    int _cps = MAX_FREQ;
++
++    float _opvPressure = 0.0f;
++
++    // Debug logging
++    uint32_t _lastDebugLogMs = 0;
++    bool _debugLogEnabled = true;
++    bool _telemetryShotActive = false;
++
++    static constexpr float BASE_FLOW_RATE = 0.25f;
++    static constexpr float MAX_PRESSURE = 15.0f;
++    static constexpr float MAX_FREQ = 60.0f;
++
++    void updatePower();
++    void onPressureUpdate(float pressure);
++
++    const char *LOG_TAG = "DimmedPump";
++    static void loopTask(void *arg);
++};
++
++#endif // DIMMEDPUMP_H
+diff -ruN gm_orig/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp gm_mod/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+--- gm_orig/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp	1970-01-01 00:00:00.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp	2026-04-19 21:12:55.169365765 +0000
+@@ -0,0 +1,168 @@
++#include "PumpTachometer.h"
++
++#include <algorithm>
++
++bool PumpTachometer::begin(const Config &cfg) {
++    _cfg = cfg;
++    reset();
++
++    if (_cfg.pin == GPIO_NUM_NC) {
++        return false;
++    }
++
++    gpio_config_t io = {};
++    io.pin_bit_mask = (1ULL << _cfg.pin);
++    io.mode = GPIO_MODE_INPUT;
++    io.pull_up_en = GPIO_PULLUP_DISABLE;
++    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
++    io.intr_type = GPIO_INTR_NEGEDGE;
++    if (gpio_config(&io) != ESP_OK) {
++        return false;
++    }
++
++#if GAGGIMATE_HAS_GPIO_GLITCH_FILTER
++    if (_cfg.enablePinGlitchFilter) {
++        gpio_pin_glitch_filter_config_t filterCfg = {
++            .gpio_num = _cfg.pin,
++        };
++        if (gpio_new_pin_glitch_filter(&filterCfg, &_glitchFilter) == ESP_OK) {
++            gpio_glitch_filter_enable(_glitchFilter);
++        }
++    }
++#endif
++
++    esp_err_t err = gpio_install_isr_service(0);
++    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
++        return false;
++    }
++
++    gpio_isr_handler_remove(_cfg.pin);
++    if (gpio_isr_handler_add(_cfg.pin, &PumpTachometer::isrThunk, this) != ESP_OK) {
++        return false;
++    }
++
++    return true;
++}
++
++void PumpTachometer::reset() {
++    portENTER_CRITICAL(&_mux);
++    _lastEdgeUs = 0;
++    _lastPeriodUs = 0;
++    _pulseCount = 0;
++    _isrRejects = 0;
++    portEXIT_CRITICAL(&_mux);
++
++    _sample = {};
++    _plausibilityRejects = 0;
++    _lastConsumedPulseCount = 0;
++    _acceptedPeriodUs = 0;
++    _acceptedPeriods.fill(0);
++    _acceptedCount = 0;
++    _acceptedIndex = 0;
++}
++
++void IRAM_ATTR PumpTachometer::isrThunk(void *arg) {
++    static_cast<PumpTachometer *>(arg)->onEdgeIsr();
++}
++
++void IRAM_ATTR PumpTachometer::onEdgeIsr() {
++    const int64_t nowUs = esp_timer_get_time();
++
++    portENTER_CRITICAL_ISR(&_mux);
++
++    if (_lastEdgeUs != 0) {
++        const uint32_t dtUs = static_cast<uint32_t>(nowUs - _lastEdgeUs);
++
++        // Reject very short periods directly inside the ISR. These are usually
++        // caused by electrical noise or double-triggered edges.
++        if (dtUs < _cfg.minPeriodUs) {
++            _isrRejects++;
++            portEXIT_CRITICAL_ISR(&_mux);
++            return;
++        }
++
++        _lastPeriodUs = dtUs;
++    }
++
++    _lastEdgeUs = nowUs;
++    _pulseCount++;
++
++    portEXIT_CRITICAL_ISR(&_mux);
++}
++
++uint32_t PumpTachometer::medianOfWindow(const uint32_t *values, size_t count) {
++    uint32_t scratch[5] = {0, 0, 0, 0, 0};
++    for (size_t i = 0; i < count && i < 5; ++i) {
++        scratch[i] = values[i];
++    }
++    std::sort(scratch, scratch + count);
++    return scratch[count / 2];
++}
++
++void PumpTachometer::pushAcceptedPeriod(uint32_t periodUs) {
++    _acceptedPeriods[_acceptedIndex] = periodUs;
++    _acceptedIndex = (_acceptedIndex + 1) % _acceptedPeriods.size();
++    if (_acceptedCount < _acceptedPeriods.size()) {
++        _acceptedCount++;
++    }
++}
++
++void PumpTachometer::update() {
++    int64_t lastEdgeUs = 0;
++    uint32_t rawPeriodUs = 0;
++    uint32_t pulseCount = 0;
++    uint32_t isrRejects = 0;
++
++    portENTER_CRITICAL(&_mux);
++    lastEdgeUs = _lastEdgeUs;
++    rawPeriodUs = _lastPeriodUs;
++    pulseCount = _pulseCount;
++    isrRejects = _isrRejects;
++    portEXIT_CRITICAL(&_mux);
++
++    if (pulseCount != _lastConsumedPulseCount && rawPeriodUs > 0) {
++        bool accept = true;
++
++        // Once we have a short history, only accept new periods that stay
++        // reasonably close to the local median. This removes isolated outliers
++        // without making the ISR itself heavier.
++        if (_acceptedCount >= 3) {
++            const uint32_t medianPeriodUs = medianOfWindow(_acceptedPeriods.data(), _acceptedCount);
++            const float minAllowed = static_cast<float>(medianPeriodUs) * _cfg.plausibilityMinRatio;
++            const float maxAllowed = static_cast<float>(medianPeriodUs) * _cfg.plausibilityMaxRatio;
++            accept = static_cast<float>(rawPeriodUs) >= minAllowed && static_cast<float>(rawPeriodUs) <= maxAllowed;
++        }
++
++        if (accept) {
++            _acceptedPeriodUs = rawPeriodUs;
++            pushAcceptedPeriod(rawPeriodUs);
++        } else {
++            _plausibilityRejects++;
++        }
++
++        _lastConsumedPulseCount = pulseCount;
++    }
++
++    _sample.pulseCount = pulseCount;
++    _sample.glitchRejects = isrRejects + _plausibilityRejects;
++
++    const int64_t nowUs = esp_timer_get_time();
++    if (lastEdgeUs == 0 || _acceptedPeriodUs == 0 || (nowUs - lastEdgeUs) > _cfg.timeoutUs) {
++        _sample.periodUs = 0;
++        _sample.rpmInst = 0.0f;
++        _sample.rpmEma = 0.0f;
++        _sample.timedOut = true;
++        return;
++    }
++
++    _sample.periodUs = _acceptedPeriodUs;
++    _sample.rpmInst = 60000000.0f / (_cfg.pulsesPerRevolution * static_cast<float>(_acceptedPeriodUs));
++
++    if (_sample.rpmEma <= 0.0f) {
++        _sample.rpmEma = _sample.rpmInst;
++    } else {
++        _sample.rpmEma += _cfg.emaAlpha * (_sample.rpmInst - _sample.rpmEma);
++    }
++
++    _sample.timedOut = false;
++}
+diff -ruN gm_orig/lib/GaggiMateController/src/peripherals/PumpTachometer.h gm_mod/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+--- gm_orig/lib/GaggiMateController/src/peripherals/PumpTachometer.h	1970-01-01 00:00:00.000000000 +0000
++++ gm_mod/lib/GaggiMateController/src/peripherals/PumpTachometer.h	2026-04-19 21:12:55.168951502 +0000
+@@ -0,0 +1,79 @@
++#ifndef PUMPTACHOMETER_H
++#define PUMPTACHOMETER_H
++
++#include <Arduino.h>
++#include <driver/gpio.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/portmacro.h>
++
++#if defined(__has_include)
++#if __has_include("driver/gpio_filter.h")
++#include <driver/gpio_filter.h>
++#define GAGGIMATE_HAS_GPIO_GLITCH_FILTER 1
++#else
++#define GAGGIMATE_HAS_GPIO_GLITCH_FILTER 0
++#endif
++#else
++#define GAGGIMATE_HAS_GPIO_GLITCH_FILTER 0
++#endif
++
++#include <array>
++
++class PumpTachometer {
++  public:
++    struct Config {
++        gpio_num_t pin = GPIO_NUM_NC;
++        float pulsesPerRevolution = 2.0f;
++        uint32_t timeoutUs = 300000;
++        uint32_t minPeriodUs = 120;
++        float emaAlpha = 0.20f;
++        bool enablePinGlitchFilter = true;
++        float plausibilityMinRatio = 0.60f;
++        float plausibilityMaxRatio = 1.70f;
++    };
++
++    struct Sample {
++        uint32_t periodUs = 0;
++        float rpmInst = 0.0f;
++        float rpmEma = 0.0f;
++        uint32_t pulseCount = 0;
++        uint32_t glitchRejects = 0;
++        bool timedOut = true;
++    };
++
++    bool begin(const Config &cfg);
++    void reset();
++    void update();
++    const Sample &sample() const { return _sample; }
++
++  private:
++    static void IRAM_ATTR isrThunk(void *arg);
++    void IRAM_ATTR onEdgeIsr();
++
++    static uint32_t medianOfWindow(const uint32_t *values, size_t count);
++    void pushAcceptedPeriod(uint32_t periodUs);
++
++    Config _cfg{};
++    Sample _sample{};
++
++    portMUX_TYPE _mux = portMUX_INITIALIZER_UNLOCKED;
++
++    volatile int64_t _lastEdgeUs = 0;
++    volatile uint32_t _lastPeriodUs = 0;
++    volatile uint32_t _pulseCount = 0;
++    volatile uint32_t _isrRejects = 0;
++
++    uint32_t _plausibilityRejects = 0;
++    uint32_t _lastConsumedPulseCount = 0;
++    uint32_t _acceptedPeriodUs = 0;
++    std::array<uint32_t, 5> _acceptedPeriods{};
++    size_t _acceptedCount = 0;
++    size_t _acceptedIndex = 0;
++
++#if GAGGIMATE_HAS_GPIO_GLITCH_FILTER
++    gpio_glitch_filter_handle_t _glitchFilter = nullptr;
++#endif
++};
++
++#endif // PUMPTACHOMETER_H

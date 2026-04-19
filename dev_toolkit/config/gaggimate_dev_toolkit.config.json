@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": ""
+    "last_patch": "pump_tacho_noise_filter_v2.patch"
   }
 }
