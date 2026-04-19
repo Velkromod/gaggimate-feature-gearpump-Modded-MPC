@@ -3,6 +3,7 @@ param()
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Require PowerShell 7.6+ explicitly.
 if ($PSVersionTable.PSEdition -ne 'Core') {
     throw "Este toolkit requiere PowerShell 7+ (pwsh). Edicion actual: $($PSVersionTable.PSEdition)."
 }
@@ -192,6 +193,100 @@ function Get-AvailableComPorts {
         return @()
     }
 }
+
+function Test-ComPortReady {
+    param(
+        [string]$Port,
+        [int]$Baud = 115200
+    )
+
+    try {
+        $sp = [System.IO.Ports.SerialPort]::new($Port, $Baud)
+        $sp.ReadTimeout = 500
+        $sp.WriteTimeout = 500
+        $sp.Open()
+        $sp.Close()
+        $sp.Dispose()
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-ForComPortReady {
+    param(
+        [string]$ToolkitRoot,
+        [string[]]$PythonCommand,
+        [string]$Port,
+        [int]$Baud,
+        [int]$TimeoutSeconds = 25
+    )
+
+    # Probe the COM port with the same Python + pyserial stack used by capture_shots.py.
+    # This is more reliable than only checking Device Manager or .NET SerialPort when the
+    # board has just rebooted after flashing and Windows is still re-enumerating the device.
+    $probeScript = @'
+import sys
+import time
+
+try:
+    import serial
+    import serial.tools.list_ports
+except Exception as exc:
+    print(f"IMPORT_ERROR:{exc}")
+    raise SystemExit(2)
+
+port = sys.argv[1]
+baud = int(sys.argv[2])
+timeout_s = float(sys.argv[3])
+
+deadline = time.time() + timeout_s
+last_error = "timeout"
+
+while time.time() < deadline:
+    ports = [p.device.upper() for p in serial.tools.list_ports.comports()]
+    if port.upper() in ports:
+        try:
+            ser = serial.Serial(port, baud, timeout=1)
+            ser.close()
+            print(f"READY:{port}")
+            raise SystemExit(0)
+        except Exception as exc:
+            last_error = repr(exc)
+    else:
+        last_error = f"NOT_PRESENT:{','.join(ports)}"
+    time.sleep(0.75)
+
+print(last_error)
+raise SystemExit(1)
+'@
+
+    $tmp = Join-Path $ToolkitRoot 'logs\serial_probe_tmp.py'
+    Set-Content -Path $tmp -Value $probeScript -Encoding UTF8
+
+    try {
+        $output = @()
+        if ($PythonCommand.Length -gt 1) {
+            $output = & $PythonCommand[0] @($PythonCommand[1..($PythonCommand.Length-1)]) $tmp $Port $Baud $TimeoutSeconds 2>&1
+        } else {
+            $output = & $PythonCommand[0] $tmp $Port $Baud $TimeoutSeconds 2>&1
+        }
+        $exit = $LASTEXITCODE
+        $joined = ($output | ForEach-Object { $_.ToString() }) -join "`n"
+        if ($exit -eq 0) {
+            Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "INFO" -Message ("Serial probe OK for {0}" -f $Port)
+            return $true
+        }
+
+        Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "WARN" -Message ("Serial probe failed for {0}: {1}" -f $Port, $joined)
+        return $false
+    }
+    finally {
+        Remove-Item -Path $tmp -ErrorAction SilentlyContinue
+    }
+}
+
 
 function Show-CurrentTelemetryConfig {
     param(
@@ -484,14 +579,17 @@ function Start-TelemetryCapture {
         throw "No se encontro tools\telemetry\capture_shots.py"
     }
 
-    # IMPORTANT: force array context so a single string path is not indexed as characters.
     $py = @(Resolve-PythonCommand -RepoRoot $RepoRoot)
-
     Write-Section "Captura de telemetria"
     Write-Info ("Puerto: {0} | Baud: {1} | Perfil: {2} | OutDir repo: {3}" -f $Port, $Baud, $Profile, $OutDir)
-    Write-Info "Usa Ctrl+C para detener."
+    Write-Info "Usa Ctrl y C para detener la captura."
 
     Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "INFO" -Message ("Inicio telemetria: COM={0}, Baud={1}, OutDir={2}, Profile={3}" -f $Port, $Baud, $OutDir, $Profile)
+
+    if (-not (Wait-ForComPortReady -ToolkitRoot $ToolkitRoot -PythonCommand $py -Port $Port -Baud ([int]$Baud) -TimeoutSeconds 25)) {
+        $detected = @(Get-AvailableComPorts)
+        throw ("El puerto {0} no esta listo para captura. Puertos detectados ahora: {1}" -f $Port, ($(if ($detected.Length -gt 0) { $detected -join ', ' } else { '(ninguno)' })))
+    }
 
     Push-Location $RepoRoot
     try {

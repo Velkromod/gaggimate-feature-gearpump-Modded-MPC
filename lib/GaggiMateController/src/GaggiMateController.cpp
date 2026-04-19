@@ -33,7 +33,7 @@ void GaggiMateController::setup() {
         pressureSensor = new PressureSensor(_config.pressureSda, _config.pressureScl, [this](float pressure) { /* noop */ });
     }
     if (_config.capabilites.dimming) {
-        pump = new DimmedPump(_config.pumpPin, _config.pumpSensePin, pressureSensor, _config.ext2Pin, _config.ext3Pin);
+        pump = new DimmedPump(_config.pumpPin, _config.pumpSensePin, pressureSensor, _config.ext2Pin, _config.ext3Pin, _config.pumpTachoPin);
     } else {
         pump = new SimplePump(_config.pumpPin, _config.pumpOn, _config.capabilites.ssrPump ? 1000.0f : 5000.0f);
     }

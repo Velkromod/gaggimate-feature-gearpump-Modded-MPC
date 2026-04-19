@@ -20,6 +20,7 @@ struct ControllerConfig {
     uint8_t heaterPin;
     uint8_t pumpPin;
     uint8_t pumpSensePin = 0;
+    uint8_t pumpTachoPin = 0;
     uint8_t pumpOn;
     uint8_t valvePin;
     uint8_t valveOn;
@@ -119,6 +120,7 @@ const ControllerConfig GM_PRO_REV_1x = {.name = "GaggiMate Pro Rev 1.0",
                                         .heaterPin = 14,
                                         .pumpPin = 9,
                                         .pumpSensePin = 21,
+                                        .pumpTachoPin = 12,
                                         .pumpOn = 1,
                                         .valvePin = 10,
                                         .valveOn = 1,
@@ -154,6 +156,7 @@ const ControllerConfig GM_PRO_LEGO = {.name = "GaggiMate Pro Lego Build",
                                       .heaterPin = 14,
                                       .pumpPin = 9,
                                       .pumpSensePin = 21,
+                                      .pumpTachoPin = 12,
                                       .pumpOn = 1,
                                       .valvePin = 10,
                                       .valveOn = 1,
@@ -189,6 +192,7 @@ const ControllerConfig GM_PRO_REV_11 = {.name = "GaggiMate Pro Rev 1.1",
                                         .heaterPin = 14,
                                         .pumpPin = 9,
                                         .pumpSensePin = 21,
+                                        .pumpTachoPin = 12,
                                         .pumpOn = 1,
                                         .valvePin = 10,
                                         .valveOn = 1,

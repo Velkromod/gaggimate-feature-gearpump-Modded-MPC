@@ -33,3 +33,14 @@ The metadata sidecar is the source of truth for channel descriptions and shot co
 2. Start the host capture script.
 3. Pull a shot.
 4. Share the generated CSV and JSON together during analysis.
+
+## Tachometer channels
+
+The firmware can now append tachometer-derived channels to the CSV when a pump tach signal is wired in:
+
+- `tach_period_us`: time between valid tach pulses in microseconds
+- `tach_rpm_inst`: instantaneous RPM computed from the measured period
+- `tach_rpm_ema`: lightly filtered RPM for easier visual inspection
+- `tach_pulse_count`: running count of accepted tach pulses
+- `tach_glitch_rejects`: count of rejected glitch pulses
+- `tach_timeout`: `1` when RPM is forced to zero because pulses stopped arriving

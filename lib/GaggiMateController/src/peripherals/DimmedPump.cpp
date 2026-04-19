@@ -42,7 +42,7 @@ int quantizePumpPowerForPSM(float desiredPowerPct) {
 
 void printShotTelemetryLegend() {
     printf("# SHOT START\n");
-    printf("# legend_version=1\n");
+    printf("# legend_version=2\n");
     printf("# time_base=ms_since_boot\n");
     printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
     printf("# raw_p = raw pressure sensor reading\n");
@@ -91,12 +91,19 @@ void printShotTelemetryLegend() {
     printf("# power_cmd = floating-point power command sent to pump stage before integer quantization\n");
     printf("# power_psm_quantized = integer power actually sent to PSM\n");
     printf("# power_quant_residual = sigma-delta residual kept for next quantization step\n");
+    printf("# tach_period_us = measured time between valid tach pulses in microseconds\n");
+    printf("# tach_rpm_inst = instantaneous RPM derived from tach_period_us and pulses-per-revolution\n");
+    printf("# tach_rpm_ema = exponentially filtered RPM intended for easier visual analysis\n");
+    printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
+    printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches\n");
+    printf("# tach_timeout = 1 when no recent tach pulse is available and RPM is forced to zero\n");
     printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
            "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
            "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
-           "power_cmd,power_psm_quantized,power_quant_residual\n");
+           "power_cmd,power_psm_quantized,power_quant_residual,"
+           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_pulse_count,tach_glitch_rejects,tach_timeout\n");
 }
 } // namespace
 
@@ -134,9 +141,11 @@ void sda_low(const SoftWire *i2c) {
     ESP_LOGV("MCP4725", "Write SDA: %d", 0);
 }
 
-DimmedPump::DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressure_sensor, uint8_t scl_pin, uint8_t sda_pin)
+DimmedPump::DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressure_sensor, uint8_t scl_pin, uint8_t sda_pin,
+                       uint8_t tacho_pin)
     : _ssr_pin(ssr_pin),
       _sense_pin(sense_pin),
+      _tachoPin(tacho_pin),
       _psm(_sense_pin, _ssr_pin, 100, FALLING, 2, 4),
       _pressureSensor(pressure_sensor),
       _pressureController(0.03f, &_ctrlPressure, &_ctrlFlow, &_currentPressure, &_controllerPower, &_valveStatus) {
@@ -176,6 +185,21 @@ DimmedPump::DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *press
 
 void DimmedPump::setup() {
     _cps = _psm.cps();
+
+    if (_tachoPin != 0) {
+        PumpTachometer::Config tachoConfig;
+        tachoConfig.pin = _tachoPin;
+        tachoConfig.pulsesPerRevolution = 2.0f;
+        tachoConfig.timeoutUs = 300000;
+        tachoConfig.minPeriodUs = 120;
+        tachoConfig.emaAlpha = 0.20f;
+
+        if (_tach.begin(tachoConfig)) {
+            ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);
+        } else {
+            ESP_LOGW(LOG_TAG, "Pump tachometer disabled or failed to initialize on GPIO %u", _tachoPin);
+        }
+    }
     if (_cps > 70) {
         _cps = _cps / 2;
     }
@@ -186,6 +210,9 @@ void DimmedPump::setup() {
 }
 
 void DimmedPump::loop() {
+    _tach.update();
+    const PumpTachometer::Sample &tach = _tach.getSample();
+
     _currentPressure = _pressureSensor->getRawPressure();
     updatePower();
     _currentFlow = _pressureController.getPumpFlowRate();
@@ -221,7 +248,8 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%d,%d,"
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
-                "%.2f,%d,%.4f\n",
+                "%.2f,%d,%.4f,"
+                "%u,%.2f,%.2f,%u,%u,%d\n",
                 now,
                 _pressureController.getRawPressure(),
                 _pressureController.getFilteredPressure(),
@@ -273,7 +301,14 @@ void DimmedPump::loop() {
 
                 g_lastPowerCommandPct,
                 g_lastQuantizedPowerPct,
-                g_powerQuantizationResidual
+                g_powerQuantizationResidual,
+
+                tach.periodUs,
+                tach.rpmInst,
+                tach.rpmEma,
+                tach.pulseCount,
+                tach.glitchRejects,
+                tach.timedOut ? 1 : 0
             );
             fflush(stdout);
         }
