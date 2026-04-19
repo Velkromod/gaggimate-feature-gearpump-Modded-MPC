@@ -3,7 +3,6 @@ param()
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-# Require PowerShell 7.6+ explicitly.
 if ($PSVersionTable.PSEdition -ne 'Core') {
     throw "Este toolkit requiere PowerShell 7+ (pwsh). Edicion actual: $($PSVersionTable.PSEdition)."
 }
@@ -485,7 +484,9 @@ function Start-TelemetryCapture {
         throw "No se encontro tools\telemetry\capture_shots.py"
     }
 
-    $py = Resolve-PythonCommand -RepoRoot $RepoRoot
+    # IMPORTANT: force array context so a single string path is not indexed as characters.
+    $py = @(Resolve-PythonCommand -RepoRoot $RepoRoot)
+
     Write-Section "Captura de telemetria"
     Write-Info ("Puerto: {0} | Baud: {1} | Perfil: {2} | OutDir repo: {3}" -f $Port, $Baud, $Profile, $OutDir)
     Write-Info "Usa Ctrl+C para detener."

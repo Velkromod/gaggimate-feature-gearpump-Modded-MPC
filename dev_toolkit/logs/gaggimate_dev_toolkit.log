@@ -1,2 +1,12 @@
 [2026-04-17 12:38:46] [ERROR] El patch no aplica limpio.
 [2026-04-17 13:50:58] [INFO] Patch aplicado: ff_recenter_and_shadow_observer_tune_repo_current.patch
+[2026-04-18 10:46:00] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
+[2026-04-18 10:46:00] [INFO] Fin telemetria
+[2026-04-18 10:46:00] [ERROR] The term 'C' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[2026-04-18 10:53:51] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
+[2026-04-18 10:53:51] [INFO] Fin telemetria
+[2026-04-18 10:53:51] [ERROR] The term 'C' is not recognized as a name of a cmdlet, function, script file, or executable program.
+Check the spelling of the name, or if a path was included, verify that the path is correct and try again.
+[2026-04-18 10:58:33] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
+[2026-04-18 11:14:25] [INFO] Fin telemetria
