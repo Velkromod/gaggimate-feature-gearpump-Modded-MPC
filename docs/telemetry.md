@@ -40,7 +40,11 @@ The firmware can now append tachometer-derived channels to the CSV when a pump t
 
 - `tach_period_us`: robust tach period estimate after hardware/software deglitching
 - `tach_rpm_inst`: instantaneous RPM computed from the validated period estimate
-- `tach_rpm_ema`: lightly filtered RPM for easier visual inspection
+- `tach_rpm_ema`: lightly filtered published RPM for easier visual inspection
+- `tach_rpm_count_window`: RPM derived from accepted pulse counts over a fixed time window
+- `tach_rpm_pub`: RPM selected for operational use after comparing the period and count-window estimates
+- `tach_quality_ok`: `1` when period and count-window RPM agree within tolerance
+- `tach_rpm_source`: `0=none`, `1=period branch`, `2=count-window fallback`
 - `tach_pulse_count`: running count of accepted tach pulses
 - `tach_glitch_rejects`: combined count of glitch/outlier rejects used to stabilise the tach signal
 - `tach_timeout`: `1` when RPM is forced to zero because pulses stopped arriving

@@ -93,9 +93,13 @@ void printShotTelemetryLegend() {
     printf("# power_quant_residual = sigma-delta residual kept for next quantization step\n");
     printf("# tach_period_us = measured time between valid tach pulses in microseconds\n");
     printf("# tach_rpm_inst = instantaneous RPM derived from tach_period_us and pulses-per-revolution\n");
-    printf("# tach_rpm_ema = exponentially filtered RPM intended for easier visual analysis\n");
+    printf("# tach_rpm_ema = exponentially filtered published RPM intended for easier visual analysis\n");
+    printf("# tach_rpm_count_window = RPM derived from accepted pulse counts over a fixed time window\n");
+    printf("# tach_rpm_pub = RPM value selected for operational use after comparing period and count-window estimates\n");
+    printf("# tach_quality_ok = 1 when period and count-window RPM agree within tolerance\n");
+    printf("# tach_rpm_source = 0=none, 1=period branch, 2=count-window fallback\n");
     printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
-    printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches\n");
+    printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches or plausibility failures\n");
     printf("# tach_timeout = 1 when no recent tach pulse is available and RPM is forced to zero\n");
     printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
@@ -103,7 +107,7 @@ void printShotTelemetryLegend() {
            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
            "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
            "power_cmd,power_psm_quantized,power_quant_residual,"
-           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_pulse_count,tach_glitch_rejects,tach_timeout\n");
+           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_timeout\n");
 }
 } // namespace
 
@@ -191,11 +195,15 @@ void DimmedPump::setup() {
         tachoConfig.pin = _tachoPin;
         tachoConfig.pulsesPerRevolution = 2.0f;
         tachoConfig.timeoutUs = 300000;
-        tachoConfig.minPeriodUs = 120;
+        tachoConfig.minPeriodUs = 6000;
+        tachoConfig.maxMechanicalRpm = 5000.0f;
         tachoConfig.emaAlpha = 0.20f;
         tachoConfig.enableHardwareGlitchFilter = true;
         tachoConfig.maxStepUpRatio = 2.20f;
         tachoConfig.minStepDownRatio = 0.45f;
+        tachoConfig.holdoffMinUs = 100;
+        tachoConfig.holdoffMaxUs = 500;
+        tachoConfig.countWindowUs = 250000;
 
         if (_tach.begin(tachoConfig)) {
             ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);
@@ -252,7 +260,7 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
                 "%.2f,%d,%.4f,"
-                "%u,%.2f,%.2f,%u,%u,%d\n",
+                "%u,%.2f,%.2f,%.2f,%.2f,%d,%d,%u,%u,%d\n",
                 now,
                 _pressureController.getRawPressure(),
                 _pressureController.getFilteredPressure(),
@@ -309,6 +317,10 @@ void DimmedPump::loop() {
                 tach.periodUs,
                 tach.rpmInst,
                 tach.rpmEma,
+                tach.rpmCountWindow,
+                tach.rpmPub,
+                tach.qualityOk ? 1 : 0,
+                tach.rpmSource,
                 tach.pulseCount,
                 tach.glitchRejects,
                 tach.timedOut ? 1 : 0

@@ -33,12 +33,21 @@ class PumpTachometer {
         bool enableHardwareGlitchFilter = true;
         float maxStepUpRatio = 2.20f;
         float minStepDownRatio = 0.45f;
+        // Ignore very short re-triggers after a valid edge to suppress local ringing.
+        uint32_t holdoffMinUs = 100;
+        uint32_t holdoffMaxUs = 500;
+        // Compute a second RPM estimate from accepted pulse counts over a fixed window.
+        uint32_t countWindowUs = 250000;
     };
 
     struct Sample {
         uint32_t periodUs = 0;
         float rpmInst = 0.0f;
         float rpmEma = 0.0f;
+        float rpmCountWindow = 0.0f;
+        float rpmPub = 0.0f;
+        uint8_t rpmSource = 0;
+        bool qualityOk = false;
         uint32_t pulseCount = 0;
         uint32_t glitchRejects = 0;
         bool timedOut = true;
@@ -70,7 +79,8 @@ class PumpTachometer {
 
     portMUX_TYPE _mux = portMUX_INITIALIZER_UNLOCKED;
 
-    volatile int64_t _lastEdgeUs = 0;
+    volatile int64_t _lastSeenEdgeUs = 0;
+    volatile int64_t _lastAcceptedEdgeUs = 0;
     volatile uint32_t _lastPeriodUs = 0;
     volatile uint32_t _pulseCount = 0;
     volatile uint32_t _glitchRejects = 0;
@@ -80,6 +90,9 @@ class PumpTachometer {
 
     uint32_t _softwareRejects = 0;
     uint32_t _physicalMinPeriodUs = 0;
+    uint32_t _lastPublishedPeriodUs = 0;
+    int64_t _lastWindowUpdateUs = 0;
+    uint32_t _lastWindowPulseCount = 0;
 
 #if PUMP_TACH_HAS_GPIO_FILTER
     gpio_glitch_filter_handle_t _glitchFilter = nullptr;

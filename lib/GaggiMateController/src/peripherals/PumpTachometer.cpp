@@ -72,7 +72,8 @@ uint32_t PumpTachometer::computePhysicalMinPeriodUs(float maxMechanicalRpm, floa
 
 void PumpTachometer::reset() {
     portENTER_CRITICAL(&_mux);
-    _lastEdgeUs = 0;
+    _lastSeenEdgeUs = 0;
+    _lastAcceptedEdgeUs = 0;
     _lastPeriodUs = 0;
     _pulseCount = 0;
     _glitchRejects = 0;
@@ -84,6 +85,9 @@ void PumpTachometer::reset() {
     portEXIT_CRITICAL(&_mux);
 
     _softwareRejects = 0;
+    _lastPublishedPeriodUs = 0;
+    _lastWindowUpdateUs = 0;
+    _lastWindowPulseCount = 0;
     _sample = {};
 }
 
@@ -96,8 +100,27 @@ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
 
     portENTER_CRITICAL_ISR(&_mux);
 
-    if (_lastEdgeUs != 0) {
-        const uint32_t dtUs = static_cast<uint32_t>(nowUs - _lastEdgeUs);
+    uint32_t holdoffUs = _config.holdoffMinUs;
+    if (_lastPeriodUs > 0) {
+        holdoffUs = std::clamp(_lastPeriodUs / 20U, _config.holdoffMinUs, _config.holdoffMaxUs);
+    }
+
+    if (_lastSeenEdgeUs != 0) {
+        const uint32_t dtSinceAnyEdgeUs = static_cast<uint32_t>(nowUs - _lastSeenEdgeUs);
+        if (holdoffUs > 0 && dtSinceAnyEdgeUs < holdoffUs) {
+            // Short re-triggers right after any edge are much more likely to be
+            // ringing than real tach transitions.
+            _lastSeenEdgeUs = nowUs;
+            _glitchRejects++;
+            portEXIT_CRITICAL_ISR(&_mux);
+            return;
+        }
+    }
+
+    _lastSeenEdgeUs = nowUs;
+
+    if (_lastAcceptedEdgeUs != 0) {
+        const uint32_t dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
 
         // Reject edges that are closer together than either the generic EMI floor
         // or the physical floor implied by the maximum mechanical RPM. This keeps
@@ -118,7 +141,7 @@ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
         }
     }
 
-    _lastEdgeUs = nowUs;
+    _lastAcceptedEdgeUs = nowUs;
     _pulseCount++;
 
     portEXIT_CRITICAL_ISR(&_mux);
@@ -144,7 +167,7 @@ void PumpTachometer::update() {
         return;
     }
 
-    int64_t lastEdgeUs = 0;
+    int64_t lastAcceptedEdgeUs = 0;
     uint32_t lastPeriodUs = 0;
     uint32_t pulseCount = 0;
     uint32_t glitchRejects = 0;
@@ -152,7 +175,7 @@ void PumpTachometer::update() {
     uint8_t periodHistoryCount = 0;
 
     portENTER_CRITICAL(&_mux);
-    lastEdgeUs = _lastEdgeUs;
+    lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
     lastPeriodUs = _lastPeriodUs;
     pulseCount = _pulseCount;
     glitchRejects = _glitchRejects;
@@ -162,24 +185,51 @@ void PumpTachometer::update() {
     }
     portEXIT_CRITICAL(&_mux);
 
+    const int64_t nowUs = esp_timer_get_time();
+
     _sample.pulseCount = pulseCount;
     _sample.glitchRejects = glitchRejects + _softwareRejects;
 
-    if (lastEdgeUs == 0 || lastPeriodUs == 0 || periodHistoryCount == 0) {
+    if (_lastWindowUpdateUs == 0) {
+        _lastWindowUpdateUs = nowUs;
+        _lastWindowPulseCount = pulseCount;
+    } else {
+        const int64_t windowElapsedUs = nowUs - _lastWindowUpdateUs;
+        if (windowElapsedUs >= static_cast<int64_t>(_config.countWindowUs)) {
+            const uint32_t deltaPulses = pulseCount - _lastWindowPulseCount;
+            if (deltaPulses == 0) {
+                _sample.rpmCountWindow = 0.0f;
+            } else {
+                _sample.rpmCountWindow =
+                    (static_cast<float>(deltaPulses) * 60000000.0f) /
+                    (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
+            }
+            _lastWindowUpdateUs = nowUs;
+            _lastWindowPulseCount = pulseCount;
+        }
+    }
+
+    if (lastAcceptedEdgeUs == 0 || lastPeriodUs == 0 || periodHistoryCount == 0) {
         _sample.periodUs = 0;
         _sample.timedOut = true;
         _sample.rpmInst = 0.0f;
-        _sample.rpmEma = 0.0f;
+        _sample.rpmPub = _sample.rpmCountWindow;
+        _sample.rpmEma = (_sample.rpmPub > 0.0f) ? _sample.rpmPub : 0.0f;
+        _sample.rpmSource = (_sample.rpmPub > 0.0f) ? 2 : 0;
+        _sample.qualityOk = (_sample.rpmPub > 0.0f);
         return;
     }
 
-    const int64_t nowUs = esp_timer_get_time();
-    if ((nowUs - lastEdgeUs) > _config.timeoutUs) {
+    if ((nowUs - lastAcceptedEdgeUs) > _config.timeoutUs) {
         // Report zero RPM once the pulse train disappears.
         _sample.periodUs = 0;
         _sample.timedOut = true;
         _sample.rpmInst = 0.0f;
+        _sample.rpmCountWindow = 0.0f;
+        _sample.rpmPub = 0.0f;
         _sample.rpmEma = 0.0f;
+        _sample.rpmSource = 0;
+        _sample.qualityOk = false;
         return;
     }
 
@@ -188,23 +238,40 @@ void PumpTachometer::update() {
     // Reject abrupt single-update jumps that are much larger than the last
     // reported value. Median filtering already removes isolated spikes, and this
     // plausibility gate catches the remaining occasional missed/extra periods.
-    if (_sample.periodUs > 0 && candidatePeriodUs > 0) {
-        const float ratio = static_cast<float>(candidatePeriodUs) / static_cast<float>(_sample.periodUs);
+    if (_lastPublishedPeriodUs > 0 && candidatePeriodUs > 0) {
+        const float ratio = static_cast<float>(candidatePeriodUs) / static_cast<float>(_lastPublishedPeriodUs);
         if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
-            candidatePeriodUs = _sample.periodUs;
+            candidatePeriodUs = _lastPublishedPeriodUs;
             _softwareRejects++;
         }
     }
 
+    _lastPublishedPeriodUs = candidatePeriodUs;
     _sample.periodUs = candidatePeriodUs;
     _sample.timedOut = false;
     _sample.rpmInst = 60000000.0f / (_config.pulsesPerRevolution * static_cast<float>(candidatePeriodUs));
 
-    if (_sample.rpmEma <= 0.0f) {
-        _sample.rpmEma = _sample.rpmInst;
+    const bool countWindowReady = _sample.rpmCountWindow > 0.0f;
+    const float comparisonDenominator = std::max(_sample.rpmCountWindow, 100.0f);
+    const float mismatch = countWindowReady ? std::fabs(_sample.rpmInst - _sample.rpmCountWindow) / comparisonDenominator : 0.0f;
+
+    if (countWindowReady && mismatch > 0.05f) {
+        // Prefer the count-window RPM whenever the instantaneous period branch
+        // still disagrees materially with the robust frequency estimate.
+        _sample.rpmPub = _sample.rpmCountWindow;
+        _sample.rpmSource = 2;
+        _sample.qualityOk = false;
     } else {
-        // Keep a lightly filtered RPM for telemetry consumers that prefer a
-        // steadier value than the instantaneous period-based estimate.
-        _sample.rpmEma += _config.emaAlpha * (_sample.rpmInst - _sample.rpmEma);
+        _sample.rpmPub = _sample.rpmInst;
+        _sample.rpmSource = 1;
+        _sample.qualityOk = countWindowReady;
+    }
+
+    if (_sample.rpmEma <= 0.0f) {
+        _sample.rpmEma = _sample.rpmPub;
+    } else {
+        // Smooth the published RPM so charts can show a stable trend while the
+        // raw instantaneous and count-window estimates remain available.
+        _sample.rpmEma += _config.emaAlpha * (_sample.rpmPub - _sample.rpmEma);
     }
 }

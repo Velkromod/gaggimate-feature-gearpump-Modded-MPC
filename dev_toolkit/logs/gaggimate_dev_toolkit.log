@@ -36,3 +36,8 @@
 [2026-04-19 20:45:19] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
 [2026-04-19 20:45:19] [INFO] Serial probe OK for COM5
 [2026-04-19 20:48:37] [INFO] Fin telemetria
+[2026-04-20 06:24:43] [ERROR] El patch no aplica limpio.
+[2026-04-20 07:05:13] [ERROR] El patch no aplica limpio.
+[2026-04-20 07:06:37] [ERROR] El patch no aplica limpio.
+[2026-04-20 07:08:12] [ERROR] El patch no aplica limpio.
+[2026-04-20 07:23:13] [INFO] Patch aplicado: tacho_count_window_incremental_v2.patch
