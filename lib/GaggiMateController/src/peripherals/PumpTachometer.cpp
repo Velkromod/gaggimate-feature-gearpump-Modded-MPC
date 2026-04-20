@@ -1,9 +1,11 @@
 #include "PumpTachometer.h"
 
 #include <algorithm>
+#include <cmath>
 
 bool PumpTachometer::begin(const Config &config) {
     _config = config;
+    _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
     reset();
 
     if (_config.pin == 0) {
@@ -55,6 +57,19 @@ bool PumpTachometer::begin(const Config &config) {
     return true;
 }
 
+uint32_t PumpTachometer::computePhysicalMinPeriodUs(float maxMechanicalRpm, float pulsesPerRevolution) {
+    if (!(maxMechanicalRpm > 0.0f) || !(pulsesPerRevolution > 0.0f)) {
+        return 0;
+    }
+
+    const float pulsesPerSecond = (maxMechanicalRpm / 60.0f) * pulsesPerRevolution;
+    if (!(pulsesPerSecond > 0.0f)) {
+        return 0;
+    }
+
+    return static_cast<uint32_t>(std::lround(1000000.0f / pulsesPerSecond));
+}
+
 void PumpTachometer::reset() {
     portENTER_CRITICAL(&_mux);
     _lastEdgeUs = 0;
@@ -84,9 +99,12 @@ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
     if (_lastEdgeUs != 0) {
         const uint32_t dtUs = static_cast<uint32_t>(nowUs - _lastEdgeUs);
 
-        // Ignore pulses that are too close together to be physically plausible.
-        // This provides a lightweight software guard against EMI and ringing.
-        if (dtUs < _config.minPeriodUs) {
+        // Reject edges that are closer together than either the generic EMI floor
+        // or the physical floor implied by the maximum mechanical RPM. This keeps
+        // the tach reader from accepting impossible sub-periods when a single
+        // electrical pulse rings or crosses the input threshold multiple times.
+        const uint32_t minAcceptedPeriodUs = std::max(_config.minPeriodUs, _physicalMinPeriodUs);
+        if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
             _glitchRejects++;
             portEXIT_CRITICAL_ISR(&_mux);
             return;

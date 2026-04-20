@@ -1,0 +1,38 @@
+[2026-04-19 18:39:52] [INFO] Inicio telemetria: COM=COM6, Baud=115200, OutDir=.\shots, Profile=Cremina_Lever
+[2026-04-19 18:39:52] [INFO] Serial probe OK for COM6
+[2026-04-19 18:51:10] [INFO] Fin telemetria
+[2026-04-19 19:15:08] [INFO] Configuracion actualizada: COM=6, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:18:51] [INFO] Inicio telemetria: COM=6, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:19:12] [INFO] Inicio telemetria: COM=6, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:19:27] [INFO] Inicio telemetria: COM=6, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:19:53] [WARN] Serial probe failed for 6: NOT_PRESENT:COM6
+[2026-04-19 19:19:53] [ERROR] El puerto 6 no esta listo para captura. Puertos detectados ahora: COM6
+[2026-04-19 19:30:45] [INFO] Inicio telemetria: COM=6, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:31:08] [INFO] COM por defecto cambiado manualmente a 6
+[2026-04-19 19:33:03] [INFO] COM por defecto cambiado manualmente a 5
+[2026-04-19 19:33:08] [INFO] Inicio telemetria: COM=5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:33:33] [WARN] Serial probe failed for 5: NOT_PRESENT:COM5
+[2026-04-19 19:33:33] [ERROR] El puerto 5 no esta listo para captura. Puertos detectados ahora: COM5
+[2026-04-19 19:33:44] [INFO] Inicio telemetria: COM=5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:34:10] [WARN] Serial probe failed for 5: NOT_PRESENT:
+[2026-04-19 19:34:10] [ERROR] El puerto 5 no esta listo para captura. Puertos detectados ahora: (ninguno)
+[2026-04-19 19:37:21] [INFO] Inicio telemetria: COM=5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:37:47] [WARN] Serial probe failed for 5: NOT_PRESENT:COM5
+[2026-04-19 19:37:47] [ERROR] El puerto 5 no esta listo para captura. Puertos detectados ahora: COM5
+[2026-04-19 19:40:59] [INFO] Inicio telemetria: COM=5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:41:25] [WARN] Serial probe failed for 5: NOT_PRESENT:COM5
+[2026-04-19 19:41:25] [ERROR] El puerto 5 no esta listo para captura. Puertos detectados ahora: COM5
+[2026-04-19 19:42:23] [INFO] COM por defecto cambiado manualmente a COM5
+[2026-04-19 19:42:28] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:42:28] [INFO] Serial probe OK for COM5
+[2026-04-19 19:42:59] [INFO] Fin telemetria
+[2026-04-19 19:43:06] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:43:07] [INFO] Serial probe OK for COM5
+[2026-04-19 19:43:27] [INFO] Fin telemetria
+[2026-04-19 19:43:54] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 19:43:54] [INFO] Serial probe OK for COM5
+[2026-04-19 19:45:42] [INFO] Fin telemetria
+[2026-04-19 20:28:18] [INFO] Patch aplicado: pump_tacho_physical_floor_5000.patch
+[2026-04-19 20:45:19] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-19 20:45:19] [INFO] Serial probe OK for COM5
+[2026-04-19 20:48:37] [INFO] Fin telemetria

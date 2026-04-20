@@ -1,11 +1,11 @@
 {
   "telemetry": {
-    "profile": "Cremina_Lever",
-    "com_port": "COM6",
+    "profile": "Flat_9bar_Debug",
+    "com_port": "COM5",
     "outdir": ".\\shots",
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "pump_tacho_noise_filter_v2.patch"
+    "last_patch": "pump_tacho_physical_floor_5000.patch"
   }
 }

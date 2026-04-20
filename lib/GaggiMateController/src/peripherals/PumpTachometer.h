@@ -24,6 +24,11 @@ class PumpTachometer {
         float pulsesPerRevolution = 2.0f;
         uint32_t timeoutUs = 300000;
         uint32_t minPeriodUs = 120;
+        // The pump/ESC combination used in this project cannot exceed 5000 RPM.
+        // With a two-pulse tach output, that implies a minimum real pulse-to-pulse
+        // period of 6000 us. Any shorter interval is treated as physically impossible
+        // even if it slips through the hardware glitch filter.
+        float maxMechanicalRpm = 5000.0f;
         float emaAlpha = 0.20f;
         bool enableHardwareGlitchFilter = true;
         float maxStepUpRatio = 2.20f;
@@ -57,6 +62,7 @@ class PumpTachometer {
     void IRAM_ATTR onEdgeIsr();
 
     static uint32_t computeMedianPeriod(const uint32_t *values, size_t count);
+    static uint32_t computePhysicalMinPeriodUs(float maxMechanicalRpm, float pulsesPerRevolution);
 
     Config _config{};
     Sample _sample{};
@@ -73,6 +79,7 @@ class PumpTachometer {
     volatile uint8_t _periodHistoryCount = 0;
 
     uint32_t _softwareRejects = 0;
+    uint32_t _physicalMinPeriodUs = 0;
 
 #if PUMP_TACH_HAS_GPIO_FILTER
     gpio_glitch_filter_handle_t _glitchFilter = nullptr;
