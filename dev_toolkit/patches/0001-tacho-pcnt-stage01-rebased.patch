@@ -1,0 +1,163 @@
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.h b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+index 106c109..c1c522b 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.h
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+@@ -3,6 +3,7 @@
+ 
+ #include <Arduino.h>
+ #include <driver/gpio.h>
++#include <driver/pcnt.h>
+ #include <esp_timer.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/portmacro.h>
+@@ -36,8 +37,15 @@ class PumpTachometer {
+         // Ignore very short re-triggers after a valid edge to suppress local ringing.
+         uint32_t holdoffMinUs = 100;
+         uint32_t holdoffMaxUs = 500;
+-        // Compute a second RPM estimate from accepted pulse counts over a fixed window.
+-        uint32_t countWindowUs = 250000;
++        // Compute a second RPM estimate from hardware-counted pulses over a fixed window.
++        uint32_t countWindowUs = 200000;
++        // Minimum pulse count required before trusting a new count-window RPM update.
++        uint32_t minCountWindowPulses = 6;
++        // Period-vs-count-window relative mismatch tolerance before falling back.
++        float qualityTolerance = 0.05f;
++        // PCNT filter threshold in APB clock cycles (10-bit, max 1023 @ 80 MHz).
++        uint16_t pcntFilterCycles = 1000;
++        bool enablePcnt = true;
+     };
+ 
+     struct Sample {
+@@ -94,6 +102,10 @@ class PumpTachometer {
+     int64_t _lastWindowUpdateUs = 0;
+     uint32_t _lastWindowPulseCount = 0;
+ 
++    bool _pcntEnabled = false;
++    static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
++    static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
++
+ #if PUMP_TACH_HAS_GPIO_FILTER
+     gpio_glitch_filter_handle_t _glitchFilter = nullptr;
+ #endif
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+index 4f40de4..43c1869 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+@@ -2,10 +2,12 @@
+ 
+ #include <algorithm>
+ #include <cmath>
++#include <cstdint>
+ 
+ bool PumpTachometer::begin(const Config &config) {
+     _config = config;
+     _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
++    _pcntEnabled = false;
+     reset();
+ 
+     if (_config.pin == 0) {
+@@ -27,6 +29,32 @@ bool PumpTachometer::begin(const Config &config) {
+         return false;
+     }
+ 
++    if (_config.enablePcnt) {
++        const pcnt_config_t pcntConfig = {
++            .pulse_gpio_num = static_cast<int>(_config.pin),
++            .ctrl_gpio_num = PCNT_PIN_NOT_USED,
++            .lctrl_mode = PCNT_MODE_KEEP,
++            .hctrl_mode = PCNT_MODE_KEEP,
++            .pos_mode = PCNT_COUNT_DIS,
++            .neg_mode = PCNT_COUNT_INC,
++            .counter_h_lim = 32767,
++            .counter_l_lim = 0,
++            .unit = PCNT_UNIT,
++            .channel = PCNT_CHANNEL,
++        };
++
++        if (pcnt_unit_config(&pcntConfig) == ESP_OK) {
++            const uint16_t filterCycles = static_cast<uint16_t>(std::clamp<uint32_t>(_config.pcntFilterCycles, 0U, 1023U));
++            if (filterCycles > 0 && pcnt_set_filter_value(PCNT_UNIT, filterCycles) == ESP_OK) {
++                pcnt_filter_enable(PCNT_UNIT);
++            }
++            pcnt_counter_pause(PCNT_UNIT);
++            pcnt_counter_clear(PCNT_UNIT);
++            pcnt_counter_resume(PCNT_UNIT);
++            _pcntEnabled = true;
++        }
++    }
++
+ #if PUMP_TACH_HAS_GPIO_FILTER
+     if (_config.enableHardwareGlitchFilter) {
+         gpio_pin_glitch_filter_config_t filterConfig = {
+@@ -89,6 +117,12 @@ void PumpTachometer::reset() {
+     _lastWindowUpdateUs = 0;
+     _lastWindowPulseCount = 0;
+     _sample = {};
++
++    if (_pcntEnabled) {
++        pcnt_counter_pause(PCNT_UNIT);
++        pcnt_counter_clear(PCNT_UNIT);
++        pcnt_counter_resume(PCNT_UNIT);
++    }
+ }
+ 
+ void IRAM_ATTR PumpTachometer::isrThunk(void *arg) {
+@@ -193,13 +227,30 @@ void PumpTachometer::update() {
+     if (_lastWindowUpdateUs == 0) {
+         _lastWindowUpdateUs = nowUs;
+         _lastWindowPulseCount = pulseCount;
++        if (_pcntEnabled) {
++            pcnt_counter_pause(PCNT_UNIT);
++            pcnt_counter_clear(PCNT_UNIT);
++            pcnt_counter_resume(PCNT_UNIT);
++        }
+     } else {
+         const int64_t windowElapsedUs = nowUs - _lastWindowUpdateUs;
+         if (windowElapsedUs >= static_cast<int64_t>(_config.countWindowUs)) {
+-            const uint32_t deltaPulses = pulseCount - _lastWindowPulseCount;
++            uint32_t deltaPulses = 0;
++            if (_pcntEnabled) {
++                int16_t pcntCount = 0;
++                pcnt_counter_pause(PCNT_UNIT);
++                if (pcnt_get_counter_value(PCNT_UNIT, &pcntCount) == ESP_OK && pcntCount > 0) {
++                    deltaPulses = static_cast<uint32_t>(pcntCount);
++                }
++                pcnt_counter_clear(PCNT_UNIT);
++                pcnt_counter_resume(PCNT_UNIT);
++            } else {
++                deltaPulses = pulseCount - _lastWindowPulseCount;
++            }
++
+             if (deltaPulses == 0) {
+                 _sample.rpmCountWindow = 0.0f;
+-            } else {
++            } else if (deltaPulses >= _config.minCountWindowPulses) {
+                 _sample.rpmCountWindow =
+                     (static_cast<float>(deltaPulses) * 60000000.0f) /
+                     (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
+@@ -255,7 +306,7 @@ void PumpTachometer::update() {
+     const float comparisonDenominator = std::max(_sample.rpmCountWindow, 100.0f);
+     const float mismatch = countWindowReady ? std::fabs(_sample.rpmInst - _sample.rpmCountWindow) / comparisonDenominator : 0.0f;
+ 
+-    if (countWindowReady && mismatch > 0.05f) {
++    if (countWindowReady && mismatch > _config.qualityTolerance) {
+         // Prefer the count-window RPM whenever the instantaneous period branch
+         // still disagrees materially with the robust frequency estimate.
+         _sample.rpmPub = _sample.rpmCountWindow;
+diff --git a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+index ce066b1..0a9b7f0 100644
+--- a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
++++ b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+@@ -203,7 +203,11 @@ void DimmedPump::setup() {
+         tachoConfig.minStepDownRatio = 0.45f;
+         tachoConfig.holdoffMinUs = 100;
+         tachoConfig.holdoffMaxUs = 500;
+-        tachoConfig.countWindowUs = 250000;
++        tachoConfig.countWindowUs = 200000;
++        tachoConfig.minCountWindowPulses = 6;
++        tachoConfig.qualityTolerance = 0.05f;
++        tachoConfig.pcntFilterCycles = 1000;
++        tachoConfig.enablePcnt = true;
+ 
+         if (_tach.begin(tachoConfig)) {
+             ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);

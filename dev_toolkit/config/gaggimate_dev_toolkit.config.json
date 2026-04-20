@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "tacho_count_window_incremental_v2.patch"
+    "last_patch": "0001-tacho-pcnt-stage01-rebased.patch"
   }
 }

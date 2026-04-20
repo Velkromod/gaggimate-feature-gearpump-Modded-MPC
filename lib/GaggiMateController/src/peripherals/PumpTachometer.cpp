@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 bool PumpTachometer::begin(const Config &config) {
     _config = config;
     _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
+    _pcntEnabled = false;
     reset();
 
     if (_config.pin == 0) {
@@ -25,6 +27,32 @@ bool PumpTachometer::begin(const Config &config) {
     if (gpio_config(&io) != ESP_OK) {
         _enabled = false;
         return false;
+    }
+
+    if (_config.enablePcnt) {
+        const pcnt_config_t pcntConfig = {
+            .pulse_gpio_num = static_cast<int>(_config.pin),
+            .ctrl_gpio_num = PCNT_PIN_NOT_USED,
+            .lctrl_mode = PCNT_MODE_KEEP,
+            .hctrl_mode = PCNT_MODE_KEEP,
+            .pos_mode = PCNT_COUNT_DIS,
+            .neg_mode = PCNT_COUNT_INC,
+            .counter_h_lim = 32767,
+            .counter_l_lim = 0,
+            .unit = PCNT_UNIT,
+            .channel = PCNT_CHANNEL,
+        };
+
+        if (pcnt_unit_config(&pcntConfig) == ESP_OK) {
+            const uint16_t filterCycles = static_cast<uint16_t>(std::clamp<uint32_t>(_config.pcntFilterCycles, 0U, 1023U));
+            if (filterCycles > 0 && pcnt_set_filter_value(PCNT_UNIT, filterCycles) == ESP_OK) {
+                pcnt_filter_enable(PCNT_UNIT);
+            }
+            pcnt_counter_pause(PCNT_UNIT);
+            pcnt_counter_clear(PCNT_UNIT);
+            pcnt_counter_resume(PCNT_UNIT);
+            _pcntEnabled = true;
+        }
     }
 
 #if PUMP_TACH_HAS_GPIO_FILTER
@@ -89,6 +117,12 @@ void PumpTachometer::reset() {
     _lastWindowUpdateUs = 0;
     _lastWindowPulseCount = 0;
     _sample = {};
+
+    if (_pcntEnabled) {
+        pcnt_counter_pause(PCNT_UNIT);
+        pcnt_counter_clear(PCNT_UNIT);
+        pcnt_counter_resume(PCNT_UNIT);
+    }
 }
 
 void IRAM_ATTR PumpTachometer::isrThunk(void *arg) {
@@ -193,13 +227,30 @@ void PumpTachometer::update() {
     if (_lastWindowUpdateUs == 0) {
         _lastWindowUpdateUs = nowUs;
         _lastWindowPulseCount = pulseCount;
+        if (_pcntEnabled) {
+            pcnt_counter_pause(PCNT_UNIT);
+            pcnt_counter_clear(PCNT_UNIT);
+            pcnt_counter_resume(PCNT_UNIT);
+        }
     } else {
         const int64_t windowElapsedUs = nowUs - _lastWindowUpdateUs;
         if (windowElapsedUs >= static_cast<int64_t>(_config.countWindowUs)) {
-            const uint32_t deltaPulses = pulseCount - _lastWindowPulseCount;
+            uint32_t deltaPulses = 0;
+            if (_pcntEnabled) {
+                int16_t pcntCount = 0;
+                pcnt_counter_pause(PCNT_UNIT);
+                if (pcnt_get_counter_value(PCNT_UNIT, &pcntCount) == ESP_OK && pcntCount > 0) {
+                    deltaPulses = static_cast<uint32_t>(pcntCount);
+                }
+                pcnt_counter_clear(PCNT_UNIT);
+                pcnt_counter_resume(PCNT_UNIT);
+            } else {
+                deltaPulses = pulseCount - _lastWindowPulseCount;
+            }
+
             if (deltaPulses == 0) {
                 _sample.rpmCountWindow = 0.0f;
-            } else {
+            } else if (deltaPulses >= _config.minCountWindowPulses) {
                 _sample.rpmCountWindow =
                     (static_cast<float>(deltaPulses) * 60000000.0f) /
                     (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
@@ -255,7 +306,7 @@ void PumpTachometer::update() {
     const float comparisonDenominator = std::max(_sample.rpmCountWindow, 100.0f);
     const float mismatch = countWindowReady ? std::fabs(_sample.rpmInst - _sample.rpmCountWindow) / comparisonDenominator : 0.0f;
 
-    if (countWindowReady && mismatch > 0.05f) {
+    if (countWindowReady && mismatch > _config.qualityTolerance) {
         // Prefer the count-window RPM whenever the instantaneous period branch
         // still disagrees materially with the robust frequency estimate.
         _sample.rpmPub = _sample.rpmCountWindow;

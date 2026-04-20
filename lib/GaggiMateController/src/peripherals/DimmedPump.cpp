@@ -203,7 +203,11 @@ void DimmedPump::setup() {
         tachoConfig.minStepDownRatio = 0.45f;
         tachoConfig.holdoffMinUs = 100;
         tachoConfig.holdoffMaxUs = 500;
-        tachoConfig.countWindowUs = 250000;
+        tachoConfig.countWindowUs = 200000;
+        tachoConfig.minCountWindowPulses = 6;
+        tachoConfig.qualityTolerance = 0.05f;
+        tachoConfig.pcntFilterCycles = 1000;
+        tachoConfig.enablePcnt = true;
 
         if (_tach.begin(tachoConfig)) {
             ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);

@@ -41,3 +41,10 @@
 [2026-04-20 07:06:37] [ERROR] El patch no aplica limpio.
 [2026-04-20 07:08:12] [ERROR] El patch no aplica limpio.
 [2026-04-20 07:23:13] [INFO] Patch aplicado: tacho_count_window_incremental_v2.patch
+[2026-04-20 17:43:33] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-20 17:43:33] [INFO] Serial probe OK for COM5
+[2026-04-20 17:44:42] [INFO] Fin telemetria
+[2026-04-20 19:01:49] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-20 19:01:50] [INFO] Serial probe OK for COM5
+[2026-04-20 19:38:59] [ERROR] El patch no aplica limpio.
+[2026-04-20 19:51:05] [INFO] Patch aplicado: 0001-tacho-pcnt-stage01-rebased.patch

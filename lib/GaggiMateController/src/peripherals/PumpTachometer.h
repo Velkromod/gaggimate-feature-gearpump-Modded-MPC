@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <driver/gpio.h>
+#include <driver/pcnt.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
@@ -36,8 +37,15 @@ class PumpTachometer {
         // Ignore very short re-triggers after a valid edge to suppress local ringing.
         uint32_t holdoffMinUs = 100;
         uint32_t holdoffMaxUs = 500;
-        // Compute a second RPM estimate from accepted pulse counts over a fixed window.
-        uint32_t countWindowUs = 250000;
+        // Compute a second RPM estimate from hardware-counted pulses over a fixed window.
+        uint32_t countWindowUs = 200000;
+        // Minimum pulse count required before trusting a new count-window RPM update.
+        uint32_t minCountWindowPulses = 6;
+        // Period-vs-count-window relative mismatch tolerance before falling back.
+        float qualityTolerance = 0.05f;
+        // PCNT filter threshold in APB clock cycles (10-bit, max 1023 @ 80 MHz).
+        uint16_t pcntFilterCycles = 1000;
+        bool enablePcnt = true;
     };
 
     struct Sample {
@@ -93,6 +101,10 @@ class PumpTachometer {
     uint32_t _lastPublishedPeriodUs = 0;
     int64_t _lastWindowUpdateUs = 0;
     uint32_t _lastWindowPulseCount = 0;
+
+    bool _pcntEnabled = false;
+    static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
+    static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
 
 #if PUMP_TACH_HAS_GPIO_FILTER
     gpio_glitch_filter_handle_t _glitchFilter = nullptr;
