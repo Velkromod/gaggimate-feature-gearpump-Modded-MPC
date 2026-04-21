@@ -52,3 +52,7 @@
 [2026-04-20 19:54:55] [INFO] Serial probe OK for COM5
 [2026-04-20 19:57:28] [INFO] Fin telemetria
 [2026-04-20 20:15:21] [INFO] Patch aplicado: 0002-tacho-pcnt-corrective-v2.patch
+[2026-04-20 20:16:24] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-20 20:16:24] [INFO] Serial probe OK for COM5
+[2026-04-20 20:18:05] [INFO] Fin telemetria
+[2026-04-20 21:00:24] [INFO] Patch aplicado: 0003-tacho-pcnt-diagnostic-v3 (1).patch
