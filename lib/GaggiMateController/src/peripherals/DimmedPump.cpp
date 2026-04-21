@@ -206,7 +206,7 @@ void DimmedPump::setup() {
         tachoConfig.countWindowUs = 200000;
         tachoConfig.minCountWindowPulses = 6;
         tachoConfig.qualityTolerance = 0.05f;
-        tachoConfig.pcntFilterCycles = 1000;
+        tachoConfig.pcntFilterCycles = 1023;
         tachoConfig.enablePcnt = true;
 
         if (_tach.begin(tachoConfig)) {

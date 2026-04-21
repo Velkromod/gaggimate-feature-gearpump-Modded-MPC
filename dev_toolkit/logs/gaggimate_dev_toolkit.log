@@ -48,3 +48,7 @@
 [2026-04-20 19:01:50] [INFO] Serial probe OK for COM5
 [2026-04-20 19:38:59] [ERROR] El patch no aplica limpio.
 [2026-04-20 19:51:05] [INFO] Patch aplicado: 0001-tacho-pcnt-stage01-rebased.patch
+[2026-04-20 19:54:55] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-20 19:54:55] [INFO] Serial probe OK for COM5
+[2026-04-20 19:57:28] [INFO] Fin telemetria
+[2026-04-20 20:15:21] [INFO] Patch aplicado: 0002-tacho-pcnt-corrective-v2.patch

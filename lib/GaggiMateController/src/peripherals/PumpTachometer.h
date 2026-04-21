@@ -44,8 +44,14 @@ class PumpTachometer {
         // Period-vs-count-window relative mismatch tolerance before falling back.
         float qualityTolerance = 0.05f;
         // PCNT filter threshold in APB clock cycles (10-bit, max 1023 @ 80 MHz).
-        uint16_t pcntFilterCycles = 1000;
+        uint16_t pcntFilterCycles = 1023;
         bool enablePcnt = true;
+        // Sanity-check PCNT windows against the legacy ISR-accepted pulse count.
+        // This catches cases where the hardware counter still overcounts because a
+        // single tach pulse produces multiple threshold crossings that survive the
+        // short hardware glitch filter.
+        float pcntLegacyMinRatio = 0.70f;
+        float pcntLegacyMaxRatio = 1.30f;
     };
 
     struct Sample {

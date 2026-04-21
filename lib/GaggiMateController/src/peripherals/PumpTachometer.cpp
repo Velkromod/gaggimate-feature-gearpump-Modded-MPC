@@ -235,24 +235,40 @@ void PumpTachometer::update() {
     } else {
         const int64_t windowElapsedUs = nowUs - _lastWindowUpdateUs;
         if (windowElapsedUs >= static_cast<int64_t>(_config.countWindowUs)) {
-            uint32_t deltaPulses = 0;
+            const uint32_t deltaPulsesLegacy = pulseCount - _lastWindowPulseCount;
+            uint32_t deltaPulsesPcnt = 0;
             if (_pcntEnabled) {
                 int16_t pcntCount = 0;
                 pcnt_counter_pause(PCNT_UNIT);
                 if (pcnt_get_counter_value(PCNT_UNIT, &pcntCount) == ESP_OK && pcntCount > 0) {
-                    deltaPulses = static_cast<uint32_t>(pcntCount);
+                    deltaPulsesPcnt = static_cast<uint32_t>(pcntCount);
                 }
                 pcnt_counter_clear(PCNT_UNIT);
                 pcnt_counter_resume(PCNT_UNIT);
-            } else {
-                deltaPulses = pulseCount - _lastWindowPulseCount;
             }
 
-            if (deltaPulses == 0) {
+            uint32_t selectedDeltaPulses = deltaPulsesLegacy;
+            if (_pcntEnabled && deltaPulsesPcnt > 0) {
+                if (deltaPulsesLegacy >= _config.minCountWindowPulses) {
+                    const float ratio = static_cast<float>(deltaPulsesPcnt) / static_cast<float>(std::max<uint32_t>(deltaPulsesLegacy, 1U));
+                    if (ratio >= _config.pcntLegacyMinRatio && ratio <= _config.pcntLegacyMaxRatio) {
+                        selectedDeltaPulses = deltaPulsesPcnt;
+                    } else {
+                        selectedDeltaPulses = deltaPulsesLegacy;
+                        _softwareRejects++;
+                    }
+                } else {
+                    // If the legacy branch does not have enough pulses yet, allow PCNT to
+                    // bootstrap the window on its own.
+                    selectedDeltaPulses = deltaPulsesPcnt;
+                }
+            }
+
+            if (selectedDeltaPulses == 0) {
                 _sample.rpmCountWindow = 0.0f;
-            } else if (deltaPulses >= _config.minCountWindowPulses) {
+            } else if (selectedDeltaPulses >= _config.minCountWindowPulses) {
                 _sample.rpmCountWindow =
-                    (static_cast<float>(deltaPulses) * 60000000.0f) /
+                    (static_cast<float>(selectedDeltaPulses) * 60000000.0f) /
                     (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
             }
             _lastWindowUpdateUs = nowUs;

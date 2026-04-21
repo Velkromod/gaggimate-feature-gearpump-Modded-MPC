@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "0001-tacho-pcnt-stage01-rebased.patch"
+    "last_patch": "0002-tacho-pcnt-corrective-v2.patch"
   }
 }
