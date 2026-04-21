@@ -59,3 +59,15 @@
 [2026-04-20 21:09:21] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
 [2026-04-20 21:09:22] [INFO] Serial probe OK for COM5
 [2026-04-21 06:45:48] [INFO] Patch aplicado: 0004-tacho-v3.1-fix-telemetry.patch
+[2026-04-21 06:48:56] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-21 06:48:56] [INFO] Serial probe OK for COM5
+[2026-04-21 06:50:00] [INFO] Fin telemetria
+[2026-04-21 18:00:16] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:24:38] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:31:10] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:31:30] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:38:54] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:46:28] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:53:15] [ERROR] El patch no aplica limpio.
+[2026-04-21 18:53:38] [ERROR] El patch no aplica limpio.
+[2026-04-21 19:08:28] [INFO] Patch aplicado: 0005-tacho-mcpwm-capture-stage01-fixed-currentrepo.patch

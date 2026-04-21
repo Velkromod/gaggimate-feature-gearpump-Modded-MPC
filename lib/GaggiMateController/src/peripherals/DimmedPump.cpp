@@ -211,6 +211,8 @@ void DimmedPump::setup() {
         tachoConfig.qualityTolerance = 0.05f;
         tachoConfig.pcntFilterCycles = 1023;
         tachoConfig.enablePcnt = true;
+        tachoConfig.enableMcpwmCapture = true;
+        tachoConfig.mcpwmCapturePrescale = 1;
 
         if (_tach.begin(tachoConfig)) {
             ESP_LOGI(LOG_TAG, "Pump tachometer enabled on GPIO %u", _tachoPin);

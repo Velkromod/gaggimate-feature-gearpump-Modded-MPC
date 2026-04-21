@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <driver/pcnt.h>
+#include <driver/mcpwm.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
@@ -47,6 +48,8 @@ class PumpTachometer {
         // PCNT filter threshold in APB clock cycles (10-bit, max 1023 @ 80 MHz).
         uint16_t pcntFilterCycles = 1023;
         bool enablePcnt = true;
+        bool enableMcpwmCapture = true;
+        uint32_t mcpwmCapturePrescale = 1;
         // Sanity-check PCNT raw windows against the ISR-accepted pulse count.
         // This catches cases where the hardware counter still overcounts because a
         // single tach pulse produces multiple threshold crossings that survive the
@@ -89,7 +92,9 @@ class PumpTachometer {
     // The ISR is intentionally tiny: timestamp the edge, reject obviously
     // impossible pulses, then store the accepted period into a short history.
     static void IRAM_ATTR isrThunk(void *arg);
+    static bool IRAM_ATTR captureThunk(mcpwm_unit_t mcpwm, mcpwm_capture_channel_id_t capChannel, const cap_event_data_t *edata, void *userData);
     void IRAM_ATTR onEdgeIsr();
+    void IRAM_ATTR onCaptureIsr(uint32_t captureValue);
 
     static uint32_t computeMedianPeriod(const uint32_t *values, size_t count);
     static uint32_t computePhysicalMinPeriodUs(float maxMechanicalRpm, float pulsesPerRevolution);
@@ -119,8 +124,13 @@ class PumpTachometer {
     uint8_t _pcntBadWindows = 0;
 
     bool _pcntEnabled = false;
+    bool _captureEnabled = false;
     static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
     static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
+    static constexpr mcpwm_unit_t MCPWM_UNIT = MCPWM_UNIT_0;
+    static constexpr mcpwm_capture_channel_id_t MCPWM_CAPTURE_CHANNEL = MCPWM_SELECT_CAP0;
+    static constexpr uint32_t MCPWM_CAPTURE_HZ = 80000000UL;
+    volatile uint32_t _lastCaptureValue = 0;
 
 #if PUMP_TACH_HAS_GPIO_FILTER
     gpio_glitch_filter_handle_t _glitchFilter = nullptr;
