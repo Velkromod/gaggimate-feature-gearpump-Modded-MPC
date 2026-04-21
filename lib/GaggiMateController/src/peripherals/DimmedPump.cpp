@@ -267,7 +267,7 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
                 "%.2f,%d,%.4f,"
-                "%u,%.2f,%.2f,%.2f,%.2f,%d,%d,%u,%u,%d\n",
+                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d\n",
                 now,
                 _pressureController.getRawPressure(),
                 _pressureController.getFilteredPressure(),

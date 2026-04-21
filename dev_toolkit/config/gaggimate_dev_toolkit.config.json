@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "0003-tacho-pcnt-diagnostic-v3 (1).patch"
+    "last_patch": "0004-tacho-v3.1-fix-telemetry.patch"
   }
 }
