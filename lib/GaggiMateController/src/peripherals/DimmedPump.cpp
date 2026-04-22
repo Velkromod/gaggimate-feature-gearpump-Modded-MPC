@@ -539,166 +539,85 @@ void DimmedPump::loop() {
 
 
             printf(
-
                 "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.4f,%.3f,%.3f,"
-
                 "%.2f,%.2f,%.2f,%d,%d,%.5f,"
-
                 "%.2f,%.2f,%.2f,%d,%d,"
-
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
-
                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
-
                 "%.2f,%d,%.4f,"
-
-                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%u,%u,%u,%d
-",
-
+                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%u,%u,%u,%d\n",
                 now,
-
                 _pressureController.getRawPressure(),
-
                 _pressureController.getFilteredPressure(),
-
                 _pressureController.getRawPressureSetpoint(),
-
                 _pressureController.getFilteredPressureSetpoint(),
-
                 _pressureController.getRecipePressureSetpoint(),
-
                 _pressureController.getControlPressureSetpoint(),
-
                 _pressureController.getFilteredSetpointDerivative(),
-
                 _pressureController.getControlOutput(),
-
                 _pressureController.getPumpDutyCycleInternal(),
-
                 _pressureController.getPumpFlowRate(),
-
                 _pressureController.getCoffeeFlowRate(),
 
-
-
                 _pressureController.getRawPressureControlOutput(),
-
                 _pressureController.getAppliedPressureControlOutput(),
-
                 _pressureController.getPressureLimiterDelta(),
-
                 _pressureController.isPressureLimiterActiveUp() ? 1 : 0,
-
                 _pressureController.isPressureLimiterActiveDown() ? 1 : 0,
-
                 _pressureController.getErrorIntegral(),
 
-
-
                 _pressureController.getUnclampedPressureControlOutput(),
-
                 _pressureController.getClampedPressureControlOutput(),
-
                 _pressureController.getPressureClampDelta(),
-
                 _pressureController.isPressureClampActiveHigh() ? 1 : 0,
-
                 _pressureController.isPressureClampActiveLow() ? 1 : 0,
 
-
-
                 _pressureController.getPressureFeedbackOutput(),
-
                 _pressureController.getPressureFeedforwardHoldOutput(),
-
                 _pressureController.getPressureFeedforwardDynamicOutput(),
-
                 _pressureController.getPressureFeedforwardDynamicRawRequest(),
-
                 _pressureController.getPressureFeedforwardPressureWeight(),
-
                 _pressureController.getPressureFeedforwardAboveWeight(),
-
                 _pressureController.getPressureFeedforwardGamma(),
-
                 _pressureController.getPressureFeedforwardTotalOutput(),
-
                 _pressureController.isRampHoldActive() ? 1 : 0,
-
                 _pressureController.getPressureDropRateActive(),
 
-
-
                 _pressureController.isMpcShadowEnabled() ? 1 : 0,
-
                 _pressureController.getMpcShadowSuggestedOutput(),
-
                 _pressureController.getMpcShadowSteadyStateOutput(),
-
                 _pressureController.getMpcShadowTrimOutput(),
-
                 _pressureController.getMpcShadowPredictedNextPressure(),
-
                 _pressureController.getMpcShadowPredictedTerminalPressure(),
-
                 _pressureController.getMpcShadowEstimatedOutflow(),
-
                 _pressureController.getMpcShadowEstimatedOutflowRaw(),
-
                 _pressureController.getMpcShadowResidual(),
-
                 _pressureController.getMpcShadowResidualBias(),
-
                 _pressureController.getMpcShadowCost(),
 
-
-
                 g_lastPowerCommandPct,
-
                 g_lastQuantizedPowerPct,
-
                 g_powerQuantizationResidual,
 
-
-
                 tach.periodUs,
-
                 tach.rpmInst,
-
                 tach.rpmEma,
-
                 tach.rpmCountWindow,
-
                 tach.rpmCountWindowPcntRaw,
-
                 tach.pcntRatio,
-
                 tach.rpmPub,
-
                 tach.qualityOk ? 1 : 0,
-
                 tach.rpmSource,
-
                 tach.pulseCount,
-
                 tach.glitchRejects,
-
                 tach.pcntHealthy ? 1 : 0,
-
                 tach.captureEnabledCfg ? 1 : 0,
-
                 tach.captureInitOk ? 1 : 0,
-
                 tach.captureActive ? 1 : 0,
-
                 tach.captureEventCount,
-
                 tach.captureLastPeriodUs,
-
                 tach.captureLastEdge,
-
                 tach.timedOut ? 1 : 0
-
             );
 
             fflush(stdout);
