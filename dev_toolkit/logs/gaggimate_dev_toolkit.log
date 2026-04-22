@@ -78,3 +78,7 @@
 [2026-04-21 20:01:25] [ERROR] El patch no aplica limpio.
 [2026-04-21 20:36:54] [ERROR] El patch no aplica limpio.
 [2026-04-21 20:50:34] [INFO] Patch aplicado: 0006-mcpwm-capture-telemetry-currentrepo-fixed.patch
+[2026-04-21 20:55:06] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-21 20:55:06] [INFO] Serial probe OK for COM5
+[2026-04-21 20:57:22] [INFO] Fin telemetria
+[2026-04-21 21:22:02] [INFO] Patch aplicado: 0007-fix-mcpwm-telemetry-column-mismatch.patch

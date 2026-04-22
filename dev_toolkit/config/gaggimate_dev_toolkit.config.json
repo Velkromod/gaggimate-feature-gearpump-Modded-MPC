@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "0006-mcpwm-capture-telemetry-currentrepo-fixed.patch"
+    "last_patch": "0007-fix-mcpwm-telemetry-column-mismatch.patch"
   }
 }
