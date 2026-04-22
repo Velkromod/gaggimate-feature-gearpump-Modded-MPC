@@ -42,7 +42,7 @@ int quantizePumpPowerForPSM(float desiredPowerPct) {
 
 void printShotTelemetryLegend() {
     printf("# SHOT START\n");
-    printf("# legend_version=3\n");
+    printf("# legend_version=4\n");
     printf("# time_base=ms_since_boot\n");
     printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
     printf("# raw_p = raw pressure sensor reading\n");
@@ -103,6 +103,12 @@ void printShotTelemetryLegend() {
     printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
     printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches or plausibility failures\n");
     printf("# tach_pcnt_healthy = 1 when raw PCNT windows have matched ISR-accepted windows for multiple consecutive updates\n");
+    printf("# tach_capture_enabled_cfg = 1 when MCPWM capture is enabled by configuration\n");
+    printf("# tach_capture_init_ok = 1 when MCPWM capture initialized successfully\n");
+    printf("# tach_capture_active = 1 after MCPWM capture has observed events in this run\n");
+    printf("# tach_capture_event_count = number of capture ISR events seen since last reset\n");
+    printf("# tach_capture_last_period_us = most recent MCPWM capture period converted to microseconds\n");
+    printf("# tach_capture_last_edge = last capture edge enum reported by MCPWM\n");
     printf("# tach_timeout = 1 when no recent tach pulse is available and RPM is forced to zero\n");
     printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
@@ -110,7 +116,7 @@ void printShotTelemetryLegend() {
            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
            "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
            "power_cmd,power_psm_quantized,power_quant_residual,"
-           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_timeout\n");
+           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_capture_enabled_cfg,tach_capture_init_ok,tach_capture_active,tach_capture_event_count,tach_capture_last_period_us,tach_capture_last_edge,tach_timeout\n");
 }
 } // namespace
 
@@ -269,7 +275,7 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
                 "%.2f,%d,%.4f,"
-                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d\n",
+                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%d,%u,%u,%u,%d\n",
                 now,
                 _pressureController.getRawPressure(),
                 _pressureController.getFilteredPressure(),
@@ -335,6 +341,12 @@ void DimmedPump::loop() {
                 tach.pulseCount,
                 tach.glitchRejects,
                 tach.pcntHealthy ? 1 : 0,
+                tach.captureEnabledCfg ? 1 : 0,
+                tach.captureInitOk ? 1 : 0,
+                tach.captureActive ? 1 : 0,
+                tach.captureEventCount,
+                tach.captureLastPeriodUs,
+                tach.captureLastEdge,
                 tach.timedOut ? 1 : 0
             );
             fflush(stdout);

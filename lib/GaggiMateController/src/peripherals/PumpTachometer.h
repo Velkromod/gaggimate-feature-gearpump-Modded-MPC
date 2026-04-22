@@ -71,6 +71,12 @@ class PumpTachometer {
         float rpmPub = 0.0f;
         uint8_t rpmSource = 0;
         bool qualityOk = false;
+        bool captureEnabledCfg = false;
+        bool captureInitOk = false;
+        bool captureActive = false;
+        uint32_t captureEventCount = 0;
+        uint32_t captureLastPeriodUs = 0;
+        uint32_t captureLastEdge = 0;
         bool pcntHealthy = false;
         uint32_t pulseCount = 0;
         uint32_t glitchRejects = 0;
@@ -94,7 +100,7 @@ class PumpTachometer {
     static void IRAM_ATTR isrThunk(void *arg);
     static bool IRAM_ATTR captureThunk(mcpwm_unit_t mcpwm, mcpwm_capture_channel_id_t capChannel, const cap_event_data_t *edata, void *userData);
     void IRAM_ATTR onEdgeIsr();
-    void IRAM_ATTR onCaptureIsr(uint32_t captureValue);
+    void IRAM_ATTR onCaptureIsr(uint32_t captureValue, uint32_t captureEdge);
 
     static uint32_t computeMedianPeriod(const uint32_t *values, size_t count);
     static uint32_t computePhysicalMinPeriodUs(float maxMechanicalRpm, float pulsesPerRevolution);
@@ -125,6 +131,12 @@ class PumpTachometer {
 
     bool _pcntEnabled = false;
     bool _captureEnabled = false;
+    bool _captureEnabledCfg = false;
+    bool _captureInitOk = false;
+    volatile bool _captureActive = false;
+    volatile uint32_t _captureEventCount = 0;
+    volatile uint32_t _captureLastPeriodTicks = 0;
+    volatile uint32_t _captureLastEdge = 0;
     static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
     static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
     static constexpr mcpwm_unit_t MCPWM_UNIT = MCPWM_UNIT_0;

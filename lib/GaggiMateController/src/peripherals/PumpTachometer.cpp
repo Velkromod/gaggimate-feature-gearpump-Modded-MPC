@@ -15,6 +15,8 @@ bool PumpTachometer::begin(const Config &config) {
     _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
     _pcntEnabled = false;
     _captureEnabled = false;
+    _captureEnabledCfg = _config.enableMcpwmCapture;
+    _captureInitOk = false;
     reset();
 
     if (_config.pin == 0) {
@@ -84,6 +86,7 @@ bool PumpTachometer::begin(const Config &config) {
 
             if (mcpwm_capture_enable_channel(MCPWM_UNIT, MCPWM_CAPTURE_CHANNEL, &capConfig) == ESP_OK) {
                 _captureEnabled = true;
+                _captureInitOk = true;
             }
         }
     }
@@ -143,6 +146,10 @@ void PumpTachometer::reset() {
     _pcntGoodWindows = 0;
     _pcntBadWindows = 0;
     _lastCaptureValue = 0;
+    _captureActive = false;
+    _captureEventCount = 0;
+    _captureLastPeriodTicks = 0;
+    _captureLastEdge = 0;
     _sample = {};
 
     if (_pcntEnabled) {
@@ -161,18 +168,22 @@ bool IRAM_ATTR PumpTachometer::captureThunk(mcpwm_unit_t, mcpwm_capture_channel_
         return false;
     }
 
-    static_cast<PumpTachometer *>(userData)->onCaptureIsr(edata->cap_value);
+    static_cast<PumpTachometer *>(userData)->onCaptureIsr(edata->cap_value, static_cast<uint32_t>(edata->cap_edge));
     return false;
 }
 
 void IRAM_ATTR PumpTachometer::onEdgeIsr() {
-    onCaptureIsr(static_cast<uint32_t>(esp_timer_get_time()));
+    onCaptureIsr(static_cast<uint32_t>(esp_timer_get_time()), 0U);
 }
 
-void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue) {
+void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t captureEdge) {
     const int64_t nowUs = esp_timer_get_time();
 
     portENTER_CRITICAL_ISR(&_mux);
+
+    _captureActive = _captureEnabled;
+    _captureEventCount++;
+    _captureLastEdge = captureEdge;
 
     uint32_t holdoffUs = _config.holdoffMinUs;
     if (_lastPeriodUs > 0) {
@@ -196,6 +207,7 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue) {
         if (_captureEnabled) {
             const uint32_t dtTicks = captureValue - _lastCaptureValue;
             dtUs = captureTicksToUs(dtTicks);
+            _captureLastPeriodTicks = dtTicks;
         } else {
             dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
         }
@@ -264,6 +276,12 @@ void PumpTachometer::update() {
 
     _sample.pulseCount = pulseCount;
     _sample.glitchRejects = glitchRejects + _softwareRejects;
+    _sample.captureEnabledCfg = _captureEnabledCfg;
+    _sample.captureInitOk = _captureInitOk;
+    _sample.captureActive = _captureActive;
+    _sample.captureEventCount = _captureEventCount;
+    _sample.captureLastPeriodUs = captureTicksToUs(_captureLastPeriodTicks);
+    _sample.captureLastEdge = _captureLastEdge;
 
     if (_lastWindowUpdateUs == 0) {
         _lastWindowUpdateUs = nowUs;

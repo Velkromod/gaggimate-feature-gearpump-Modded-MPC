@@ -6,6 +6,6 @@
     "baud": "115200"
   },
   "ui": {
-    "last_patch": "0005-tacho-mcpwm-capture-stage01-fixed-currentrepo.patch"
+    "last_patch": "0006-mcpwm-capture-telemetry-currentrepo-fixed.patch"
   }
 }

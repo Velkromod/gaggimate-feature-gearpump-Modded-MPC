@@ -1,0 +1,176 @@
+diff --git a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+index eb27f2d..af738c0 100644
+--- a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
++++ b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+@@ -42,7 +42,7 @@ int quantizePumpPowerForPSM(float desiredPowerPct) {
+ 
+ void printShotTelemetryLegend() {
+     printf("# SHOT START\n");
+-    printf("# legend_version=3\n");
++    printf("# legend_version=4\n");
+     printf("# time_base=ms_since_boot\n");
+     printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
+     printf("# raw_p = raw pressure sensor reading\n");
+@@ -103,6 +103,12 @@ void printShotTelemetryLegend() {
+     printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
+     printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches or plausibility failures\n");
+     printf("# tach_pcnt_healthy = 1 when raw PCNT windows have matched ISR-accepted windows for multiple consecutive updates\n");
++    printf("# tach_capture_enabled_cfg = 1 when MCPWM capture is enabled by configuration\n");
++    printf("# tach_capture_init_ok = 1 when MCPWM capture initialized successfully\n");
++    printf("# tach_capture_active = 1 after MCPWM capture has observed events in this run\n");
++    printf("# tach_capture_event_count = number of capture ISR events seen since last reset\n");
++    printf("# tach_capture_last_period_us = most recent MCPWM capture period converted to microseconds\n");
++    printf("# tach_capture_last_edge = last capture edge enum reported by MCPWM\n");
+     printf("# tach_timeout = 1 when no recent tach pulse is available and RPM is forced to zero\n");
+     printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
+            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
+@@ -110,7 +116,7 @@ void printShotTelemetryLegend() {
+            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
+            "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
+            "power_cmd,power_psm_quantized,power_quant_residual,"
+-           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_timeout\n");
++           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_capture_enabled_cfg,tach_capture_init_ok,tach_capture_active,tach_capture_event_count,tach_capture_last_period_us,tach_capture_last_edge,tach_timeout\n");
+ }
+ } // namespace
+ 
+@@ -269,7 +275,7 @@ void DimmedPump::loop() {
+                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
+                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                 "%.2f,%d,%.4f,"
+-                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d\n",
++                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%d,%u,%u,%u,%d\n",
+                 now,
+                 _pressureController.getRawPressure(),
+                 _pressureController.getFilteredPressure(),
+@@ -335,6 +341,12 @@ void DimmedPump::loop() {
+                 tach.pulseCount,
+                 tach.glitchRejects,
+                 tach.pcntHealthy ? 1 : 0,
++                tach.captureEnabledCfg ? 1 : 0,
++                tach.captureInitOk ? 1 : 0,
++                tach.captureActive ? 1 : 0,
++                tach.captureEventCount,
++                tach.captureLastPeriodUs,
++                tach.captureLastEdge,
+                 tach.timedOut ? 1 : 0
+             );
+             fflush(stdout);
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+index ad58bfa..76e58d9 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+@@ -15,6 +15,8 @@ bool PumpTachometer::begin(const Config &config) {
+     _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
+     _pcntEnabled = false;
+     _captureEnabled = false;
++    _captureEnabledCfg = _config.enableMcpwmCapture;
++    _captureInitOk = false;
+     reset();
+ 
+     if (_config.pin == 0) {
+@@ -84,6 +86,7 @@ bool PumpTachometer::begin(const Config &config) {
+ 
+             if (mcpwm_capture_enable_channel(MCPWM_UNIT, MCPWM_CAPTURE_CHANNEL, &capConfig) == ESP_OK) {
+                 _captureEnabled = true;
++                _captureInitOk = true;
+             }
+         }
+     }
+@@ -143,6 +146,10 @@ void PumpTachometer::reset() {
+     _pcntGoodWindows = 0;
+     _pcntBadWindows = 0;
+     _lastCaptureValue = 0;
++    _captureActive = false;
++    _captureEventCount = 0;
++    _captureLastPeriodTicks = 0;
++    _captureLastEdge = 0;
+     _sample = {};
+ 
+     if (_pcntEnabled) {
+@@ -161,19 +168,23 @@ bool IRAM_ATTR PumpTachometer::captureThunk(mcpwm_unit_t, mcpwm_capture_channel_
+         return false;
+     }
+ 
+-    static_cast<PumpTachometer *>(userData)->onCaptureIsr(edata->cap_value);
++    static_cast<PumpTachometer *>(userData)->onCaptureIsr(edata->cap_value, static_cast<uint32_t>(edata->cap_edge));
+     return false;
+ }
+ 
+ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
+-    onCaptureIsr(static_cast<uint32_t>(esp_timer_get_time()));
++    onCaptureIsr(static_cast<uint32_t>(esp_timer_get_time()), 0U);
+ }
+ 
+-void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue) {
++void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t captureEdge) {
+     const int64_t nowUs = esp_timer_get_time();
+ 
+     portENTER_CRITICAL_ISR(&_mux);
+ 
++    _captureActive = _captureEnabled;
++    _captureEventCount++;
++    _captureLastEdge = captureEdge;
++
+     uint32_t holdoffUs = _config.holdoffMinUs;
+     if (_lastPeriodUs > 0) {
+         holdoffUs = std::clamp(_lastPeriodUs / 20U, _config.holdoffMinUs, _config.holdoffMaxUs);
+@@ -196,6 +207,7 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue) {
+         if (_captureEnabled) {
+             const uint32_t dtTicks = captureValue - _lastCaptureValue;
+             dtUs = captureTicksToUs(dtTicks);
++            _captureLastPeriodTicks = dtTicks;
+         } else {
+             dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+         }
+@@ -264,6 +276,12 @@ void PumpTachometer::update() {
+ 
+     _sample.pulseCount = pulseCount;
+     _sample.glitchRejects = glitchRejects + _softwareRejects;
++    _sample.captureEnabledCfg = _captureEnabledCfg;
++    _sample.captureInitOk = _captureInitOk;
++    _sample.captureActive = _captureActive;
++    _sample.captureEventCount = _captureEventCount;
++    _sample.captureLastPeriodUs = captureTicksToUs(_captureLastPeriodTicks);
++    _sample.captureLastEdge = _captureLastEdge;
+ 
+     if (_lastWindowUpdateUs == 0) {
+         _lastWindowUpdateUs = nowUs;
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.h b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+index 13645a1..9a5622c 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.h
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+@@ -71,6 +71,12 @@ class PumpTachometer {
+         float rpmPub = 0.0f;
+         uint8_t rpmSource = 0;
+         bool qualityOk = false;
++        bool captureEnabledCfg = false;
++        bool captureInitOk = false;
++        bool captureActive = false;
++        uint32_t captureEventCount = 0;
++        uint32_t captureLastPeriodUs = 0;
++        uint32_t captureLastEdge = 0;
+         bool pcntHealthy = false;
+         uint32_t pulseCount = 0;
+         uint32_t glitchRejects = 0;
+@@ -94,7 +100,7 @@ class PumpTachometer {
+     static void IRAM_ATTR isrThunk(void *arg);
+     static bool IRAM_ATTR captureThunk(mcpwm_unit_t mcpwm, mcpwm_capture_channel_id_t capChannel, const cap_event_data_t *edata, void *userData);
+     void IRAM_ATTR onEdgeIsr();
+-    void IRAM_ATTR onCaptureIsr(uint32_t captureValue);
++    void IRAM_ATTR onCaptureIsr(uint32_t captureValue, uint32_t captureEdge);
+ 
+     static uint32_t computeMedianPeriod(const uint32_t *values, size_t count);
+     static uint32_t computePhysicalMinPeriodUs(float maxMechanicalRpm, float pulsesPerRevolution);
+@@ -125,6 +131,12 @@ class PumpTachometer {
+ 
+     bool _pcntEnabled = false;
+     bool _captureEnabled = false;
++    bool _captureEnabledCfg = false;
++    bool _captureInitOk = false;
++    volatile bool _captureActive = false;
++    volatile uint32_t _captureEventCount = 0;
++    volatile uint32_t _captureLastPeriodTicks = 0;
++    volatile uint32_t _captureLastEdge = 0;
+     static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
+     static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
+     static constexpr mcpwm_unit_t MCPWM_UNIT = MCPWM_UNIT_0;
