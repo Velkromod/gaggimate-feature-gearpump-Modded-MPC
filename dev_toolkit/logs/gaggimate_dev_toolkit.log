@@ -83,3 +83,7 @@
 [2026-04-21 20:57:22] [INFO] Fin telemetria
 [2026-04-21 21:22:02] [INFO] Patch aplicado: 0007-fix-mcpwm-telemetry-column-mismatch.patch
 [2026-04-22 06:53:59] [ERROR] El patch no aplica limpio.
+[2026-04-22 18:51:18] [ERROR] El patch no aplica limpio.
+[2026-04-22 19:06:36] [ERROR] El patch no aplica limpio.
+[2026-04-22 19:22:14] [ERROR] El patch no aplica limpio.
+[2026-04-22 19:42:33] [ERROR] El patch no aplica limpio.
