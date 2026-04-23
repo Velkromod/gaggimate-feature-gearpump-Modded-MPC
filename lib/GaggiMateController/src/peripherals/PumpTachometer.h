@@ -173,4 +173,5 @@ class PumpTachometer {
 #endif
 };
 
+// Keep a single include-guard block/class definition in this header.
 #endif // PUMPTACHOMETER_H
