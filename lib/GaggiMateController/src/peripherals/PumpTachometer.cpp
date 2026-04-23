@@ -440,6 +440,7 @@ void PumpTachometer::update() {
     if (lastAcceptedEdgeUs == 0 || lastPeriodUs == 0 || periodHistoryCount == 0) {
         _sample.periodUs = 0;
         _sample.timedOut = true;
+        _sample.captureActive = false;
         _sample.rpmInst = 0.0f;
         _sample.rpmPub = _sample.rpmCountWindow;
         _sample.rpmEma = (_sample.rpmPub > 0.0f) ? _sample.rpmPub : 0.0f;
