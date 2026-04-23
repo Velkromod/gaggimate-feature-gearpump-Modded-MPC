@@ -125,6 +125,23 @@ bool PumpTachometer::begin(const Config &config) {
         }
 
         gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+    // Exactly one edge source must feed onCaptureIsr() at a time:
+    //  - MCPWM capture callback when capture init succeeds.
+    //  - GPIO ISR only as fallback when capture is unavailable.
+    const esp_err_t isrInstallErr = gpio_install_isr_service(0);
+    if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
+        _enabled = false;
+        return false;
+    }
+
+    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+    if (!_captureEnabled) {
+        if (gpio_install_isr_service(0) != ESP_OK &&
+            gpio_install_isr_service(ESP_INTR_FLAG_IRAM) != ESP_OK) {
+            _enabled = false;
+            return false;
+        }
+
         if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin),
                                  &PumpTachometer::isrThunk, this) != ESP_OK) {
             _enabled = false;
@@ -227,8 +244,12 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
     _lastSeenEdgeUs = nowUs;
 
     _captureActive = _captureEnabled;
-    _captureEventCount++;
-    _captureLastEdge = captureEdge;
+    if (_captureEnabled) {
+        _captureEventCount++;
+        _captureLastEdge = captureEdge;
+    } else {
+        _captureLastEdge = 0;
+    }
 
     const int64_t lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
     const uint32_t holdoffUs = computeHoldoffUs(_config, _lastPeriodUs);
