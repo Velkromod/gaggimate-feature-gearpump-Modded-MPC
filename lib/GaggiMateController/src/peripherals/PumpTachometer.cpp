@@ -24,32 +24,33 @@ bool PumpTachometer::begin(const Config &config) {
         return false;
     }
 
-    gpio_config_t io = {};
-    io.pin_bit_mask = (1ULL << _config.pin);
-    io.mode = GPIO_MODE_INPUT;
-    // The tach signal already arrives through an external voltage divider, so the
-    // GPIO should not enable any internal pull resistors.
-    io.pull_up_en = GPIO_PULLUP_DISABLE;
-    io.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io.intr_type = GPIO_INTR_NEGEDGE;
-
-    if (gpio_config(&io) != ESP_OK) {
-        _enabled = false;
-        return false;
-    }
-
-    if (_config.enablePcnt) {
-        const pcnt_config_t pcntConfig = {
-            .pulse_gpio_num = static_cast<int>(_config.pin),
-            .ctrl_gpio_num = PCNT_PIN_NOT_USED,
-            .lctrl_mode = PCNT_MODE_KEEP,
-            .hctrl_mode = PCNT_MODE_KEEP,
-            .pos_mode = PCNT_COUNT_DIS,
-            .neg_mode = PCNT_COUNT_INC,
-            .counter_h_lim = 32767,
-            .counter_l_lim = 0,
-            .unit = PCNT_UNIT,
-            .channel = PCNT_CHANNEL,
+    gpio_config_t io = {};    if (_config.enableMcpwmCapture) {
+        if (mcpwm_gpio_init(MCPWM_UNIT, MCPWM_CAP_0, static_cast<int>(_config.pin)) == ESP_OK) {
+            mcpwm_capture_config_t capConfig = {};
+            capConfig.cap_edge = MCPWM_NEG_EDGE;
+            capConfig.cap_prescale = std::clamp<uint32_t>(_config.mcpwmCapturePrescale, 1U, 256U);
+            capConfig.capture_cb = &PumpTachometer::captureThunk;
+            capConfig.user_data = this;
+            if (mcpwm_capture_enable_channel(MCPWM_UNIT, MCPWM_CAPTURE_CHANNEL, &capConfig) == ESP_OK) {
+                _captureEnabled = true;
+                _captureInitOk = true;
+            } else {
+                _captureEnabled = false;
+                _captureInitOk = false;
+            }
+        } else {
+            _captureEnabled = false;
+            _captureInitOk = false;
+    }
+    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+    if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin), &PumpTachometer::isrThunk, this) != ESP_OK) {
+        _enabled = false;
+        return false;
+    }
+    _enabled = true;
+    return true;
+}
+
         };
 
         if (pcnt_unit_config(&pcntConfig) == ESP_OK) {
