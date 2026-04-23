@@ -4,8 +4,14 @@
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <driver/pcnt.h>
-#include <driver/mcpwm.h>
-#include <esp_timer.h>
+        // Ignore short re-triggers after a valid edge to suppress local ringing.
+        // The blanking window is derived from the last accepted period and is
+        // anchored to the last accepted edge, so a burst of noise cannot keep
+        // extending the holdoff window and mask the next true pulse.
+        uint32_t holdoffMinUs = 100;
+        uint32_t holdoffMaxUs = 500;
+        uint8_t holdoffPeriodDivisor = 8;
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 

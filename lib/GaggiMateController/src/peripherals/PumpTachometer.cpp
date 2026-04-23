@@ -85,19 +85,28 @@ bool PumpTachometer::begin(const Config &config) {
             capConfig.user_data = this;
 
             if (mcpwm_capture_enable_channel(MCPWM_UNIT, MCPWM_CAPTURE_CHANNEL, &capConfig) == ESP_OK) {
-                _captureEnabled = true;
-                _captureInitOk = true;
-            }    if (_lastAcceptedEdgeUs != 0) {
-        uint32_t dtUs = 0;
-        uint32_t dtTicks = 0;
-        if (_captureEnabled) {
-            dtTicks = captureValue - _lastCaptureValue;
-            dtUs = captureTicksToUs(dtTicks);
-        } else {
-            dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
-        }
-        if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
+    uint32_t holdoffUs = _config.holdoffMinUs;
+    if (_lastPeriodUs > 0) {
+        const uint32_t divisor =
+            std::max<uint32_t>(static_cast<uint32_t>(_config.holdoffPeriodDivisor), 1U);
+        holdoffUs = std::clamp(_lastPeriodUs / divisor, _config.holdoffMinUs, _config.holdoffMaxUs);
+    }
+
+    // Anchor blanking to the last accepted edge, not the last seen edge.
+    // Otherwise a burst of spurious edges can keep extending the window and
+    // cause the next real pulse to be rejected.
+    if (_lastAcceptedEdgeUs != 0) {
+        const uint32_t dtSinceAcceptedUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+        if (holdoffUs > 0 && dtSinceAcceptedUs < holdoffUs) {
             _glitchRejects++;
+            portEXIT_CRITICAL_ISR(&_mux);
+            return;
+        }
+    }
+
+    // Keep last-seen telemetry/debug semantics, but only after the edge survives
+    // the holdoff gate.
+    _lastSeenEdgeUs = nowUs;
             portEXIT_CRITICAL_ISR(&_mux);
             return;
         }
