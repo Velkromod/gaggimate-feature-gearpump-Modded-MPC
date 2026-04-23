@@ -9,6 +9,7 @@ static constexpr float M_PI = 3.14159265358979323846f;
 #include "SimpleKalmanFilter/SimpleKalmanFilter.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 class PressureController {
   private:
@@ -94,9 +95,22 @@ class PressureController {
     float getMpcShadowPredictedTerminalPressure() const { return _mpcShadowPredictedTerminalPressure; }
     float getMpcShadowEstimatedOutflow() const { return _mpcShadowEstimatedOutflow; }
     float getMpcShadowEstimatedOutflowRaw() const { return _mpcShadowEstimatedOutflowRaw; }
+    float getMpcShadowPumpActualFlow() const { return _mpcShadowPumpActualFlow; }
+    int getMpcShadowPumpFlowSource() const { return _mpcShadowPumpFlowSource; }
+    float getMpcShadowPumpFlowConfidence() const { return _mpcShadowPumpFlowConfidence; }
+    float getMpcShadowPumpFlowFromTach() const { return _mpcShadowPumpFlowFromTach; }
+    float getMpcShadowPumpFlowFromDutyModel() const { return _mpcShadowPumpFlowFromDutyModel; }
     float getMpcShadowResidual() const { return _mpcShadowResidual; }
     float getMpcShadowResidualBias() const { return _mpcShadowResidualBias; }
     float getMpcShadowCost() const { return _mpcShadowCost; }
+
+    // Integration hook for measured pump speed input.
+    // tachRpmSource convention is shared with PumpTachometer: 0=none, 1=period, 2=count-window.
+    void setPumpEstimatorInput(float tachRpm, bool tachQualityOk, uint8_t tachRpmSource) {
+        _pumpEstimatorTachRpm = std::max(0.0f, tachRpm);
+        _pumpEstimatorTachQualityOk = tachQualityOk;
+        _pumpEstimatorTachRpmSource = tachRpmSource;
+    }
 
     float getErrorIntegral() const { return _errorIntegral; }
 
@@ -122,6 +136,7 @@ class PressureController {
     void updateShadowMpc(float actualOutputPct);
     void resetShadowMpc();
     float predictPressureOneStep(float pressure, float dutyPct, float estimatedOutflow) const;
+    float estimatePumpActualFlow(float pressure, float actualOutputPct);
 
     float _dt = 1.0f; // Controller sampling period (seconds)
 
@@ -271,6 +286,11 @@ class PressureController {
 
     float _mpcShadowEstimatedOutflow = 0.0f;
     float _mpcShadowEstimatedOutflowRaw = 0.0f;
+    float _mpcShadowPumpActualFlow = 0.0f;
+    float _mpcShadowPumpFlowFromTach = 0.0f;
+    float _mpcShadowPumpFlowFromDutyModel = 0.0f;
+    int _mpcShadowPumpFlowSource = 0; // 0=duty fallback, 1=tach
+    float _mpcShadowPumpFlowConfidence = 0.0f;
     float _mpcShadowSuggestedOutput = 0.0f;
     float _mpcShadowSteadyStateOutput = 0.0f;
     float _mpcShadowTrimOutput = 0.0f;
@@ -281,6 +301,17 @@ class PressureController {
     float _mpcShadowCost = 0.0f;
     float _mpcShadowPreviousPrediction = 0.0f;
     bool _mpcShadowPreviousPredictionValid = false;
+
+    // Pump-flow estimator inputs (integration with DimmedPump tach telemetry).
+    float _pumpEstimatorTachRpm = 0.0f;
+    bool _pumpEstimatorTachQualityOk = false;
+    uint8_t _pumpEstimatorTachRpmSource = 0;
+
+    // Pump calibration curve: Q(ml/s) from RPM.
+    // Default linear mapping can be retuned with field telemetry later.
+    float _pumpFlowFromRpmCoeff2 = 0.0f;
+    float _pumpFlowFromRpmCoeff1 = 0.0055f;
+    float _pumpFlowFromRpmCoeff0 = 0.0f;
 
     // === Flow estimation ===
     float _waterThroughPuckFlowRate = 0.0f; // Water through puck flow rate (ml/s)
