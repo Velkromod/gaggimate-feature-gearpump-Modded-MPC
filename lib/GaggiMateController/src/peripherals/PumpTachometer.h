@@ -67,6 +67,12 @@ class PumpTachometer {
 
         float minStepDownRatio = 0.45f;
 
+        uint32_t holdoffMinUs = 120;
+
+        uint32_t holdoffMaxUs = 4000;
+
+        uint32_t holdoffPeriodDivisor = 4;
+
 
         // Compute a robust RPM estimate from ISR-accepted pulses over a fixed window.
 
