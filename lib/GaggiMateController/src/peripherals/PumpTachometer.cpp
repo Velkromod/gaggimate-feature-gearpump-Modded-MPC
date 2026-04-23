@@ -157,6 +157,9 @@ void PumpTachometer::reset() {
     _pcntHealthy = false;
     _pcntGoodWindows = 0;
     _pcntBadWindows = 0;
+    _captureHealthy = false;
+    _captureGoodWindows = 0;
+    _captureBadWindows = 0;
     _lastCaptureValue = 0;
     _captureActive = false;
     _captureEventCount = 0;
@@ -216,10 +219,10 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t capt
 
     if (_lastAcceptedEdgeUs != 0) {
         uint32_t dtUs = 0;
+        uint32_t dtTicks = 0;
         if (_captureEnabled) {
-            const uint32_t dtTicks = captureValue - _lastCaptureValue;
+            dtTicks = captureValue - _lastCaptureValue;
             dtUs = captureTicksToUs(dtTicks);
-            _captureLastPeriodTicks = dtTicks;
         } else {
             dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
         }
@@ -231,7 +234,19 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t capt
             return;
         }
 
+        if (_lastPeriodUs > 0 && dtUs > 0) {
+            const float ratio = static_cast<float>(dtUs) / static_cast<float>(_lastPeriodUs);
+            if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
+                _glitchRejects++;
+                portEXIT_CRITICAL_ISR(&_mux);
+                return;
+            }
+        }
+
         _lastPeriodUs = dtUs;
+        if (_captureEnabled) {
+            _captureLastPeriodTicks = dtTicks;
+        }
         _periodHistory[_periodHistoryIndex] = dtUs;
         _periodHistoryIndex = static_cast<uint8_t>((_periodHistoryIndex + 1) % PERIOD_HISTORY_SIZE);
         if (_periodHistoryCount < PERIOD_HISTORY_SIZE) {
@@ -419,16 +434,38 @@ void PumpTachometer::update() {
     const float comparisonDenominator = std::max(_sample.rpmCountWindow, 100.0f);
     const float mismatch = countWindowReady ? std::fabs(_sample.rpmInst - _sample.rpmCountWindow) / comparisonDenominator : 0.0f;
 
-    if (countWindowReady && mismatch > _config.qualityTolerance) {
+    const bool captureWindowHealthy = countWindowReady && (mismatch <= _config.qualityTolerance);
+
+    if (countWindowReady) {
+        if (captureWindowHealthy) {
+            _captureGoodWindows = static_cast<uint8_t>(std::min<uint32_t>(_captureGoodWindows + 1U, 255U));
+            _captureBadWindows = 0;
+            if (_captureGoodWindows >= _config.captureHealthyRequireGoodWindows) {
+                _captureHealthy = true;
+            }
+        } else {
+            _captureBadWindows = static_cast<uint8_t>(std::min<uint32_t>(_captureBadWindows + 1U, 255U));
+            _captureGoodWindows = 0;
+            if (_captureBadWindows >= _config.captureHealthyRequireBadWindows) {
+                _captureHealthy = false;
+            }
+        }
+    }
+
+    if (!countWindowReady) {
+        _sample.rpmPub = _sample.rpmInst;
+        _sample.rpmSource = 1;
+        _sample.qualityOk = false;
+    } else if (_captureHealthy && captureWindowHealthy) {
+        _sample.rpmPub = _sample.rpmInst;
+        _sample.rpmSource = 1;
+        _sample.qualityOk = true;
+    } else {
         // Prefer the count-window RPM whenever the instantaneous period branch
         // still disagrees materially with the robust frequency estimate.
         _sample.rpmPub = _sample.rpmCountWindow;
         _sample.rpmSource = 2;
-        _sample.qualityOk = false;
-    } else {
-        _sample.rpmPub = _sample.rpmInst;
-        _sample.rpmSource = 1;
-        _sample.qualityOk = countWindowReady;
+        _sample.qualityOk = captureWindowHealthy;
     }
 
     _sample.pcntHealthy = _pcntHealthy;

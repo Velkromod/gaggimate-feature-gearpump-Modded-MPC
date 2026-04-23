@@ -87,3 +87,43 @@
 [2026-04-22 19:06:36] [ERROR] El patch no aplica limpio.
 [2026-04-22 19:22:14] [ERROR] El patch no aplica limpio.
 [2026-04-22 19:42:33] [ERROR] El patch no aplica limpio.
+[2026-04-22 20:13:53] [ERROR] Patch 0008-mcpwm-capture-validated-fast-branch-github-current.patch (apply/apply) fallo.
+Detalle tecnico (git apply): C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:9: trailing whitespace.
+    _captureHealthy = false;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:10: trailing whitespace.
+    _captureGoodWindows = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:11: trailing whitespace.
+    _captureBadWindows = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:19: trailing whitespace.
+        uint32_t dtTicks = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:22: trailing whitespace.
+            dtTicks = captureValue - _lastCaptureValue;
+
+error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp:145
+error: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp: patch does not apply
+error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.h:59
+error: lib/GaggiMateController/src/peripherals/PumpTachometer.h: patch does not apply
+[2026-04-22 20:13:53] [ERROR] Fallo al aplicar el patch.
+Detalle tecnico (git apply): C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:9: trailing whitespace.
+    _captureHealthy = false;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:10: trailing whitespace.
+    _captureGoodWindows = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:11: trailing whitespace.
+    _captureBadWindows = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:19: trailing whitespace.
+        uint32_t dtTicks = 0;
+
+C:/Users/oneir/OneDrive/Desktop/GMGP/gaggimate-feature-gearpump-Modded-MPC/dev_toolkit/patches/0008-mcpwm-capture-validated-fast-branch-github-current.patch:22: trailing whitespace.
+            dtTicks = captureValue - _lastCaptureValue;
+
+error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp:145
+error: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp: patch does not apply
+error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.h:59
+error: lib/GaggiMateController/src/peripherals/PumpTachometer.h: patch does not apply

@@ -59,6 +59,8 @@ class PumpTachometer {
         float pcntLegacyMaxRatio = 1.15f;
         uint8_t pcntHealthyRequireGoodWindows = 3;
         uint8_t pcntHealthyRequireBadWindows = 2;
+        uint8_t captureHealthyRequireGoodWindows = 3;
+        uint8_t captureHealthyRequireBadWindows = 2;
     };
 
     struct Sample {
@@ -128,6 +130,9 @@ class PumpTachometer {
     bool _pcntHealthy = false;
     uint8_t _pcntGoodWindows = 0;
     uint8_t _pcntBadWindows = 0;
+    bool _captureHealthy = false;
+    uint8_t _captureGoodWindows = 0;
+    uint8_t _captureBadWindows = 0;
 
     bool _pcntEnabled = false;
     bool _captureEnabled = false;
