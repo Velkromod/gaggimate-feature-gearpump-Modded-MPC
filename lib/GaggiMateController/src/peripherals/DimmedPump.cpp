@@ -216,7 +216,7 @@ void printShotTelemetryLegend() {
 
     printf("# tach_capture_event_count = number of capture ISR events seen since last reset\n");
 
-    printf("# tach_capture_last_period_us = most recent MCPWM capture period converted to microseconds\n");
+    printf("# tach_capture_last_period_us = last valid accepted MCPWM capture period converted to microseconds\n");
 
     printf("# tach_capture_last_edge = last capture edge enum reported by MCPWM\n");
 
