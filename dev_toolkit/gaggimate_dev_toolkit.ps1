@@ -475,6 +475,29 @@ function Invoke-GitApplyAction {
 
     Push-Location $RepoRoot
     try {
+        function Invoke-GitApplyStep {
+            param(
+                [string]$FriendlyError,
+                [string]$Stage,
+                [string[]]$Args
+            )
+
+            $allArgs = @() + $Args + $baseArgs + @($patchPath)
+            $gitOutput = (& git apply @allArgs 2>&1 | Out-String).Trim()
+            $exitCode = $LASTEXITCODE
+
+            if ($exitCode -ne 0) {
+                $technicalDetail = if ([string]::IsNullOrWhiteSpace($gitOutput)) {
+                    "(sin salida textual de git apply)"
+                } else {
+                    $gitOutput
+                }
+
+                Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "ERROR" -Message ("Patch {0} ({1}) fallo.`nDetalle tecnico (git apply): {2}" -f $Patch.Name, $Stage, $technicalDetail)
+                throw ("{0}`nDetalle tecnico (git apply): {1}" -f $FriendlyError, $technicalDetail)
+            }
+        }
+
         switch ($Action) {
             "apply" {
                 if (-not (Confirm-Action -Message ("Aplicar patch '{0}'?" -f $Patch.Name))) {
@@ -483,22 +506,13 @@ function Invoke-GitApplyAction {
                 }
 
                 Write-Info "Verificando que el patch aplique limpio..."
-                & git apply --check @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "El patch no aplica limpio."
-                }
+                Invoke-GitApplyStep -FriendlyError "El patch no aplica limpio." -Stage "apply/check" -Args @("--check")
 
                 Write-Info "Aplicando patch..."
-                & git apply @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Fallo al aplicar el patch."
-                }
+                Invoke-GitApplyStep -FriendlyError "Fallo al aplicar el patch." -Stage "apply/apply" -Args @()
 
                 Write-Info "Verificando que quedo aplicado..."
-                & git apply -R --check @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "El patch parece haberse aplicado de forma incompleta."
-                }
+                Invoke-GitApplyStep -FriendlyError "El patch parece haberse aplicado de forma incompleta." -Stage "apply/post-check" -Args @("-R","--check")
 
                 $Config.ui.last_patch = $Patch.Name
                 Save-ToolkitConfig -ToolkitRoot $ToolkitRoot -Config $Config | Out-Null
@@ -512,26 +526,17 @@ function Invoke-GitApplyAction {
                 }
 
                 Write-Info "Verificando que el patch se pueda revertir..."
-                & git apply -R --check @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "El patch no se puede revertir limpio. Puede no estar aplicado o el arbol puede haber cambiado."
-                }
+                Invoke-GitApplyStep -FriendlyError "El patch no se puede revertir limpio. Puede no estar aplicado o el arbol puede haber cambiado." -Stage "revert/check" -Args @("-R","--check")
 
                 Write-Info "Revirtiendo patch..."
-                & git apply -R @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Fallo al revertir el patch."
-                }
+                Invoke-GitApplyStep -FriendlyError "Fallo al revertir el patch." -Stage "revert/apply" -Args @("-R")
 
                 Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "INFO" -Message ("Patch revertido: {0}" -f $Patch.Name)
                 Write-Ok ("Parche revertido correctamente: {0}" -f $Patch.Name)
             }
             "check" {
                 Write-Info "Ejecutando check del patch..."
-                & git apply --check @baseArgs $patchPath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "El patch no aplica limpio."
-                }
+                Invoke-GitApplyStep -FriendlyError "El patch no aplica limpio." -Stage "check" -Args @("--check")
 
                 Write-ToolkitLog -ToolkitRoot $ToolkitRoot -Level "INFO" -Message ("Patch check OK: {0}" -f $Patch.Name)
                 Write-Ok ("El patch aplica limpio: {0}" -f $Patch.Name)
