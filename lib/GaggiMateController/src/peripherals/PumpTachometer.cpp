@@ -132,11 +132,9 @@ bool PumpTachometer::begin(const Config &config) {
 
     // Capture is unavailable: install GPIO ISR service and register fallback ISR.
     const esp_err_t isrInstallErr = gpio_install_isr_service(GPIO_ISR_SERVICE_FLAGS);
-    if (isrInstallErr == ESP_OK) {
-        // Service installed in this call.
-    } else if (isrInstallErr == ESP_ERR_INVALID_STATE) {
-        // Service was already installed elsewhere; continue normally.
-    } else {
+    const bool isrServiceReady =
+        (isrInstallErr == ESP_OK) || (isrInstallErr == ESP_ERR_INVALID_STATE);
+    if (!isrServiceReady) {
         _enabled = false;
         return false;
     }
@@ -245,8 +243,6 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
     if (_captureEnabled) {
         _captureEventCount++;
         _captureLastEdge = captureEdge;
-    } else {
-        _captureLastEdge = 0;
     }
 
     const int64_t lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
