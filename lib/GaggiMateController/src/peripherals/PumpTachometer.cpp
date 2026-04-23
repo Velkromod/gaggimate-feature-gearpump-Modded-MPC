@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <esp_log.h>
 #include <esp_timer.h>
 
 namespace {
+
+constexpr const char *TAG = "PumpTachometer";
+constexpr int GPIO_ISR_SERVICE_FLAGS = ESP_INTR_FLAG_IRAM;
 
 uint32_t captureTicksToUs(uint32_t ticks) {
     return static_cast<uint32_t>((static_cast<uint64_t>(ticks) * 1000000ULL + 40000000ULL) /
@@ -116,28 +120,33 @@ bool PumpTachometer::begin(const Config &config) {
     // Exactly one edge source must feed onCaptureIsr() at a time:
     //  - MCPWM capture callback when capture init succeeds.
     //  - GPIO ISR only as fallback when capture is unavailable.
-    const esp_err_t isrInstallErr = gpio_install_isr_service(0);
+    const esp_err_t isrInstallErr = gpio_install_isr_service(GPIO_ISR_SERVICE_FLAGS);
     if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
         _enabled = false;
         return false;
     }
 
+    // Always clear any previously-registered GPIO handler for this pin before
+    // selecting the active edge source for this begin() cycle.
     gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
-    if (!_captureEnabled) {
-        if (gpio_install_isr_service(0) != ESP_OK &&
-            gpio_install_isr_service(ESP_INTR_FLAG_IRAM) != ESP_OK) {
-            _enabled = false;
-            return false;
-        }
 
+    if (!_captureEnabled) {
         if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin),
                                  &PumpTachometer::isrThunk, this) != ESP_OK) {
             _enabled = false;
             return false;
         }
+
+        _enabled = true;
+        ESP_LOGI(TAG, "Edge source selected: GPIO ISR fallback (captureInitOk=%d)",
+                 _captureInitOk);
+        return true;
     }
 
+    // Capture path selected: guarantee no residual GPIO ISR remains on this pin.
+    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
     _enabled = true;
+    ESP_LOGI(TAG, "Edge source selected: MCPWM capture (gpioFallback=disabled)");
     return true;
 }
 
