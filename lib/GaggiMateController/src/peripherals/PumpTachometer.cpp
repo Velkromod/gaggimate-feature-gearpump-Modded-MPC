@@ -116,6 +116,12 @@ bool PumpTachometer::begin(const Config &config) {
     // Exactly one edge source must feed onCaptureIsr() at a time:
     //  - MCPWM capture callback when capture init succeeds.
     //  - GPIO ISR only as fallback when capture is unavailable.
+    const esp_err_t isrInstallErr = gpio_install_isr_service(0);
+    if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
+        _enabled = false;
+        return false;
+    }
+
     gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
     if (!_captureEnabled) {
         if (gpio_install_isr_service(0) != ESP_OK &&
