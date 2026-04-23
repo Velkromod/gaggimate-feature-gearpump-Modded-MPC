@@ -86,7 +86,7 @@ void printShotTelemetryLegend() {
 
     printf("# SHOT START\n");
 
-    printf("# legend_version=4\n");
+    printf("# legend_version=5\n");
 
     printf("# time_base=ms_since_boot\n");
 
@@ -171,6 +171,11 @@ void printShotTelemetryLegend() {
     printf("# mpc_qout_est = estimated outflow / load used by shadow MPC model\n");
 
     printf("# mpc_qout_raw = instantaneous outflow / load estimate before shadow-MPC LPF\n");
+    printf("# mpc_qpump_actual = pump flow estimate used by shadow MPC (ml/s)\n");
+    printf("# mpc_qpump_src = pump-flow source used by shadow MPC: 0=duty-model fallback, 1=tach-calibrated\n");
+    printf("# mpc_qpump_conf = confidence score for selected pump-flow estimate (0..1)\n");
+    printf("# mpc_qpump_tach = tach-calibrated pump flow candidate before source selection\n");
+    printf("# mpc_qpump_duty = duty-model pump flow fallback candidate\n");
 
     printf("# mpc_residual = measured minus predicted pressure residual for shadow MPC\n");
 
@@ -230,7 +235,7 @@ void printShotTelemetryLegend() {
 
            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
 
-           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
+           "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_qpump_actual,mpc_qpump_src,mpc_qpump_conf,mpc_qpump_tach,mpc_qpump_duty,mpc_residual,mpc_residual_bias,mpc_cost,"
 
            "power_cmd,power_psm_quantized,power_quant_residual,"
 
@@ -478,6 +483,7 @@ void DimmedPump::loop() {
     _tach.update();
 
     const PumpTachometer::Sample &tach = _tach.getSample();
+    _pressureController.setPumpEstimatorInput(tach.rpmPub, tach.qualityOk, tach.rpmSource);
 
 
 
@@ -544,7 +550,7 @@ void DimmedPump::loop() {
                 "%.2f,%.2f,%.2f,%d,%d,%.5f,"
                 "%.2f,%.2f,%.2f,%d,%d,"
                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
-                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
                 "%.2f,%d,%.4f,"
                 "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%u,%u,%u,%d\n",
                 now,
@@ -592,6 +598,11 @@ void DimmedPump::loop() {
                 _pressureController.getMpcShadowPredictedTerminalPressure(),
                 _pressureController.getMpcShadowEstimatedOutflow(),
                 _pressureController.getMpcShadowEstimatedOutflowRaw(),
+                _pressureController.getMpcShadowPumpActualFlow(),
+                _pressureController.getMpcShadowPumpFlowSource(),
+                _pressureController.getMpcShadowPumpFlowConfidence(),
+                _pressureController.getMpcShadowPumpFlowFromTach(),
+                _pressureController.getMpcShadowPumpFlowFromDutyModel(),
                 _pressureController.getMpcShadowResidual(),
                 _pressureController.getMpcShadowResidualBias(),
                 _pressureController.getMpcShadowCost(),
