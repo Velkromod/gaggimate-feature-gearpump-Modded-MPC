@@ -316,6 +316,10 @@ void PumpTachometer::update() {
     uint32_t glitchRejects = 0;
     uint32_t periodHistory[PERIOD_HISTORY_SIZE] = {0};
     uint8_t periodHistoryCount = 0;
+    bool captureActiveRaw = false;
+    uint32_t captureEventCount = 0;
+    uint32_t captureLastPeriodTicks = 0;
+    uint32_t captureLastEdge = 0;
 
     portENTER_CRITICAL(&_mux);
     lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
@@ -326,18 +330,25 @@ void PumpTachometer::update() {
     for (size_t i = 0; i < PERIOD_HISTORY_SIZE; ++i) {
         periodHistory[i] = _periodHistory[i];
     }
+    captureActiveRaw = _captureActive;
+    captureEventCount = _captureEventCount;
+    captureLastPeriodTicks = _captureLastPeriodTicks;
+    captureLastEdge = _captureLastEdge;
     portEXIT_CRITICAL(&_mux);
 
     const int64_t nowUs = esp_timer_get_time();
+    const bool captureActiveRecent =
+        captureActiveRaw && (lastAcceptedEdgeUs != 0) &&
+        ((nowUs - lastAcceptedEdgeUs) <= static_cast<int64_t>(_config.timeoutUs));
 
     _sample.pulseCount = pulseCount;
     _sample.glitchRejects = glitchRejects + _softwareRejects;
     _sample.captureEnabledCfg = _captureEnabledCfg;
     _sample.captureInitOk = _captureInitOk;
-    _sample.captureActive = _captureActive;
-    _sample.captureEventCount = _captureEventCount;
-    _sample.captureLastPeriodUs = captureTicksToUs(_captureLastPeriodTicks);
-    _sample.captureLastEdge = _captureLastEdge;
+    _sample.captureActive = captureActiveRecent;
+    _sample.captureEventCount = captureEventCount;
+    _sample.captureLastPeriodUs = captureTicksToUs(captureLastPeriodTicks);
+    _sample.captureLastEdge = captureLastEdge;
 
     if (_lastWindowUpdateUs == 0) {
         _lastWindowUpdateUs = nowUs;
@@ -440,6 +451,7 @@ void PumpTachometer::update() {
 
     if ((nowUs - lastAcceptedEdgeUs) > _config.timeoutUs) {
         // Report zero RPM once the pulse train disappears.
+        _sample.captureActive = false;
         _sample.periodUs = 0;
         _sample.timedOut = true;
         _sample.rpmInst = 0.0f;
