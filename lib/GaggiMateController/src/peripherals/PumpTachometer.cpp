@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <esp_err.h>
 #include <esp_timer.h>
 
 namespace {
@@ -113,19 +114,32 @@ bool PumpTachometer::begin(const Config &config) {
         }
     }
 
-    const esp_err_t isrInstallErr = gpio_install_isr_service(0);
-    if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
-        _enabled = false;
-        return false;
+    // Use a single edge source:
+    // - MCPWM capture path when available
+    // - GPIO ISR fallback only when capture is unavailable
+    if (!_captureEnabled) {
+        const esp_err_t isrServiceErr = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+        if (isrServiceErr != ESP_OK && isrServiceErr != ESP_ERR_INVALID_STATE) {
+            _enabled = false;
+            return false;
+        }
+
+        gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+        if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin),
+                                 &PumpTachometer::isrThunk, this) != ESP_OK) {
+            _enabled = false;
+            return false;
+        }
+    } else {
+        // Ensure no GPIO ISR is attached when MCPWM capture is active
+        // to avoid duplicate ISR paths for the same edge stream.
+        gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
     }
 
-    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
-    if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin),
-                             &PumpTachometer::isrThunk, this) != ESP_OK) {
-        _enabled = false;
-        return false;
-    }
-
+    // Consider the tachometer enabled when either source is active:
+    // capture path or GPIO ISR fallback path.
+    // (If capture init failed and GPIO fallback registration failed, we
+    // already returned false above.)
     _enabled = true;
     return true;
 }
