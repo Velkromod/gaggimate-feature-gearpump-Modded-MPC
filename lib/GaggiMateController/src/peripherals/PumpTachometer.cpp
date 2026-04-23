@@ -118,57 +118,40 @@ bool PumpTachometer::begin(const Config &config) {
         }
     }
 
-    // Use a single edge source:
-    // - MCPWM capture path when available
-    // - GPIO ISR fallback only when capture is unavailable
-    if (!_captureEnabled) {
-        const esp_err_t isrServiceErr = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-        if (isrServiceErr != ESP_OK && isrServiceErr != ESP_ERR_INVALID_STATE) {
-            _enabled = false;
-            return false;
-        }
-
-        gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
-    // Exactly one edge source must feed onCaptureIsr() at a time:
-    //  - MCPWM capture callback when capture init succeeds.
-    //  - GPIO ISR only as fallback when capture is unavailable.
+    // Install ISR service exactly once. ESP_ERR_INVALID_STATE means it's already
+    // installed and is treated as success.
     const esp_err_t isrInstallErr = gpio_install_isr_service(GPIO_ISR_SERVICE_FLAGS);
     if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
         _enabled = false;
         return false;
     }
 
-    // Always clear any previously-registered GPIO handler for this pin before
-    // selecting the active edge source for this begin() cycle.
+    // Always clear any stale GPIO ISR handler first to prevent duplicates across
+    // begin() calls and to guarantee mutual exclusion with MCPWM capture.
     gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
 
-    if (!_captureEnabled) {
-        if (gpio_isr_handler_add(static_cast<gpio_num_t>(_config.pin),
-                                 &PumpTachometer::isrThunk, this) != ESP_OK) {
-            _enabled = false;
-            return false;
-        }
-
+    if (_captureEnabled) {
         _enabled = true;
-        ESP_LOGI(TAG, "Edge source selected: GPIO ISR fallback (captureInitOk=%d)",
-                 _captureInitOk);
+        ESP_LOGI(TAG,
+                 "Edge source selected: MCPWM capture active; GPIO ISR fallback disabled "
+                 "(captureInitOk=%d, captureEnabled=%d)",
+                 _captureInitOk, _captureEnabled);
         return true;
     }
 
-    // Capture path selected: guarantee no residual GPIO ISR remains on this pin.
-    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
-    } else {
-        // Ensure no GPIO ISR is attached when MCPWM capture is active
-        // to avoid duplicate ISR paths for the same edge stream.
-        gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+    // Capture is unavailable: register GPIO ISR fallback as the sole edge source.
+    const esp_err_t gpioIsrAddErr = gpio_isr_handler_add(
+        static_cast<gpio_num_t>(_config.pin), &PumpTachometer::isrThunk, this);
+    if (gpioIsrAddErr != ESP_OK) {
+        _enabled = false;
+        return false;
     }
 
-    // Consider the tachometer enabled when either source is active:
-    // capture path or GPIO ISR fallback path.
-    // (If capture init failed and GPIO fallback registration failed, we
-    // already returned false above.)
     _enabled = true;
-    ESP_LOGI(TAG, "Edge source selected: MCPWM capture (gpioFallback=disabled)");
+    ESP_LOGI(TAG,
+             "Edge source selected: GPIO ISR fallback active; MCPWM capture unavailable "
+             "(captureInitOk=%d, captureEnabled=%d)",
+             _captureInitOk, _captureEnabled);
     return true;
 }
 
