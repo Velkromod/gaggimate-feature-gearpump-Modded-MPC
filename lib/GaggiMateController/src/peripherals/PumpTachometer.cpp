@@ -209,32 +209,35 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
 
     portENTER_CRITICAL_ISR(&_mux);
 
+    // Telemetry only: this timestamp must not drive acceptance gates.
     _lastSeenEdgeUs = nowUs;
 
     _captureActive = _captureEnabled;
     _captureEventCount++;
     _captureLastEdge = captureEdge;
 
+    const int64_t lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
     const uint32_t holdoffUs = computeHoldoffUs(_config, _lastPeriodUs);
 
-    if (_lastAcceptedEdgeUs != 0) {
+    if (lastAcceptedEdgeUs != 0 && nowUs > lastAcceptedEdgeUs) {
         const uint32_t dtSinceAcceptedEdgeUs =
-            static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+            static_cast<uint32_t>(nowUs - lastAcceptedEdgeUs);
         if (holdoffUs > 0 && dtSinceAcceptedEdgeUs < holdoffUs) {
+            // Reject burst-noise edges without advancing any blanking reference.
             _glitchRejects++;
             portEXIT_CRITICAL_ISR(&_mux);
             return;
         }
     }
 
-    if (_lastAcceptedEdgeUs != 0) {
+    if (lastAcceptedEdgeUs != 0) {
         uint32_t dtUs = 0;
         uint32_t dtTicks = 0;
         if (_captureEnabled) {
             dtTicks = captureValue - _lastCaptureValue;
             dtUs = captureTicksToUs(dtTicks);
         } else {
-            dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+            dtUs = static_cast<uint32_t>(nowUs - lastAcceptedEdgeUs);
         }
 
         const uint32_t minAcceptedPeriodUs =
@@ -268,6 +271,7 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
         }
     }
 
+    // Update pulse/period state only after acceptance.
     _lastCaptureValue = captureValue;
     _lastAcceptedEdgeUs = nowUs;
     _pulseCount++;
