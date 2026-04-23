@@ -209,24 +209,23 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
 
     portENTER_CRITICAL_ISR(&_mux);
 
+    _lastSeenEdgeUs = nowUs;
+
     _captureActive = _captureEnabled;
     _captureEventCount++;
     _captureLastEdge = captureEdge;
 
     const uint32_t holdoffUs = computeHoldoffUs(_config, _lastPeriodUs);
 
-    if (_lastSeenEdgeUs != 0) {
-        const uint32_t dtSinceAnyEdgeUs =
-            static_cast<uint32_t>(nowUs - _lastSeenEdgeUs);
-        if (holdoffUs > 0 && dtSinceAnyEdgeUs < holdoffUs) {
-            _lastSeenEdgeUs = nowUs;
+    if (_lastAcceptedEdgeUs != 0) {
+        const uint32_t dtSinceAcceptedEdgeUs =
+            static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+        if (holdoffUs > 0 && dtSinceAcceptedEdgeUs < holdoffUs) {
             _glitchRejects++;
             portEXIT_CRITICAL_ISR(&_mux);
             return;
         }
     }
-
-    _lastSeenEdgeUs = nowUs;
 
     if (_lastAcceptedEdgeUs != 0) {
         uint32_t dtUs = 0;
