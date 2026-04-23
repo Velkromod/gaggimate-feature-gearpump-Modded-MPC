@@ -422,9 +422,10 @@ void DimmedPump::setup() {
 
         tachoConfig.minStepDownRatio = 0.45f;
 
-        tachoConfig.holdoffMinUs = 100;
+        tachoConfig.holdoffMinUs = 250;
 
-        tachoConfig.holdoffMaxUs = 500;
+        tachoConfig.holdoffMaxUs = 1500;
+        tachoConfig.holdoffPeriodDivisor = 8;
 
         tachoConfig.countWindowUs = 350000;
 
@@ -787,4 +788,3 @@ void DimmedPump::setPumpFlowPolyCoeffs(float a, float b, float c, float d) {
     _pressureController.setPumpFlowPolyCoeffs(a, b, c, d);
 
 }
-
