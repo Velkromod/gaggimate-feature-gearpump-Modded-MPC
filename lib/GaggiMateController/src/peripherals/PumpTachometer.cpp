@@ -113,8 +113,8 @@ bool PumpTachometer::begin(const Config &config) {
         }
     }
 
-    if (gpio_install_isr_service(0) != ESP_OK &&
-        gpio_install_isr_service(ESP_INTR_FLAG_IRAM) != ESP_OK) {
+    const esp_err_t isrInstallErr = gpio_install_isr_service(0);
+    if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
         _enabled = false;
         return false;
     }
