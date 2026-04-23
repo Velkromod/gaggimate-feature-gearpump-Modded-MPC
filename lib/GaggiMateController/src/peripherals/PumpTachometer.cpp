@@ -87,15 +87,27 @@ bool PumpTachometer::begin(const Config &config) {
             if (mcpwm_capture_enable_channel(MCPWM_UNIT, MCPWM_CAPTURE_CHANNEL, &capConfig) == ESP_OK) {
                 _captureEnabled = true;
                 _captureInitOk = true;
-            }
-        }
-    }
-
-    if (!_captureEnabled) {
-        // The ISR service may already be installed by another module. Treat that as
-        // success and only fail on unexpected errors.
-        esp_err_t err = gpio_install_isr_service(0);
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            }    if (_lastAcceptedEdgeUs != 0) {
+        uint32_t dtUs = 0;
+        uint32_t dtTicks = 0;
+        if (_captureEnabled) {
+            dtTicks = captureValue - _lastCaptureValue;
+            dtUs = captureTicksToUs(dtTicks);
+        } else {
+            dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+        }
+        if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
+            _glitchRejects++;
+            portEXIT_CRITICAL_ISR(&_mux);
+            return;
+        }
+
+        if (_captureEnabled) {
+            _captureLastPeriodTicks = dtTicks;
+        }
+
+        _lastPeriodUs = dtUs;
+
             _enabled = false;
             return false;
         }
