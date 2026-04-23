@@ -289,6 +289,11 @@ float PressureController::predictPressureOneStep(float pressure, float dutyPct, 
 void PressureController::resetShadowMpc() {
     _mpcShadowEstimatedOutflow = 0.0f;
     _mpcShadowEstimatedOutflowRaw = 0.0f;
+    _mpcShadowPumpActualFlow = 0.0f;
+    _mpcShadowPumpFlowFromTach = 0.0f;
+    _mpcShadowPumpFlowFromDutyModel = 0.0f;
+    _mpcShadowPumpFlowSource = 0;
+    _mpcShadowPumpFlowConfidence = 0.0f;
     _mpcShadowSuggestedOutput = 0.0f;
     _mpcShadowSteadyStateOutput = 0.0f;
     _mpcShadowTrimOutput = 0.0f;
@@ -299,6 +304,31 @@ void PressureController::resetShadowMpc() {
     _mpcShadowCost = 0.0f;
     _mpcShadowPreviousPrediction = 0.0f;
     _mpcShadowPreviousPredictionValid = false;
+}
+
+float PressureController::estimatePumpActualFlow(float pressure, float actualOutputPct) {
+    const float qAvailNow = fmaxf(getAvailableFlowAtPressure(pressure), 1e-3f);
+    const float qDutyModel = qAvailNow * std::clamp(actualOutputPct, 0.0f, 100.0f) * 0.01f;
+
+    const float rpm = std::max(0.0f, _pumpEstimatorTachRpm);
+    const float qTachRaw =
+        _pumpFlowFromRpmCoeff2 * rpm * rpm + _pumpFlowFromRpmCoeff1 * rpm + _pumpFlowFromRpmCoeff0;
+    const float qTach = std::clamp(qTachRaw, 0.0f, qAvailNow * 1.50f);
+
+    _mpcShadowPumpFlowFromDutyModel = qDutyModel;
+    _mpcShadowPumpFlowFromTach = qTach;
+
+    if (_pumpEstimatorTachQualityOk && rpm > 0.0f) {
+        _mpcShadowPumpFlowSource = 1;
+        _mpcShadowPumpFlowConfidence = (_pumpEstimatorTachRpmSource == 1) ? 1.0f : 0.85f;
+        _mpcShadowPumpActualFlow = qTach;
+    } else {
+        _mpcShadowPumpFlowSource = 0;
+        _mpcShadowPumpFlowConfidence = (rpm > 0.0f) ? 0.35f : 0.10f;
+        _mpcShadowPumpActualFlow = qDutyModel;
+    }
+
+    return _mpcShadowPumpActualFlow;
 }
 
 void PressureController::updateShadowMpc(float actualOutputPct) {
@@ -326,7 +356,7 @@ void PressureController::updateShadowMpc(float actualOutputPct) {
         _mpcShadowResidualBias, -_mpcShadowResidualBiasLimitBar, _mpcShadowResidualBiasLimitBar);
 
     const float qAvailNow = fmaxf(getAvailableFlowAtPressure(P), 1e-3f);
-    const float qPumpActual = qAvailNow * std::clamp(actualOutputPct, 0.0f, 100.0f) * 0.01f;
+    const float qPumpActual = estimatePumpActualFlow(P, actualOutputPct);
     const float clippedPressureDerivative =
         std::clamp(_filteredPressureDerivative, -_mpcShadowPressureDerivativeClipBarPerSec,
                    _mpcShadowPressureDerivativeClipBarPerSec);
