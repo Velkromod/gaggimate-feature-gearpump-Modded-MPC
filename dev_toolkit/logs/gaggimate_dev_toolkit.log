@@ -127,3 +127,7 @@ error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp:
 error: lib/GaggiMateController/src/peripherals/PumpTachometer.cpp: patch does not apply
 error: patch failed: lib/GaggiMateController/src/peripherals/PumpTachometer.h:59
 error: lib/GaggiMateController/src/peripherals/PumpTachometer.h: patch does not apply
+[2026-04-22 20:39:19] [ERROR] Patch 0008-mcpwm-capture-validated-fast-branch-github-current.patch (apply/check) fallo.
+Detalle tecnico (git apply): error: corrupt patch at line 7
+[2026-04-22 20:39:19] [ERROR] El patch no aplica limpio.
+Detalle tecnico (git apply): error: corrupt patch at line 7
