@@ -221,7 +221,6 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
     // Telemetry only: this timestamp must not drive acceptance gates.
     _lastSeenEdgeUs = nowUs;
 
-    _captureActive = _captureEnabled;
     if (_captureEnabled) {
         _captureEventCount++;
         _captureLastEdge = captureEdge;
@@ -286,6 +285,7 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue,
     _lastCaptureValue = captureValue;
     _lastAcceptedEdgeUs = nowUs;
     _pulseCount++;
+    _captureActive = _captureEnabled;
 
     portEXIT_CRITICAL_ISR(&_mux);
 }
@@ -316,7 +316,7 @@ void PumpTachometer::update() {
     uint32_t glitchRejects = 0;
     uint32_t periodHistory[PERIOD_HISTORY_SIZE] = {0};
     uint8_t periodHistoryCount = 0;
-    bool captureActiveRaw = false;
+    bool captureActive = false;
     uint32_t captureEventCount = 0;
     uint32_t captureLastPeriodTicks = 0;
     uint32_t captureLastEdge = 0;
@@ -327,6 +327,10 @@ void PumpTachometer::update() {
     pulseCount = _pulseCount;
     glitchRejects = _glitchRejects;
     periodHistoryCount = _periodHistoryCount;
+    captureActive = _captureActive;
+    captureEventCount = _captureEventCount;
+    captureLastPeriodTicks = _captureLastPeriodTicks;
+    captureLastEdge = _captureLastEdge;
     for (size_t i = 0; i < PERIOD_HISTORY_SIZE; ++i) {
         periodHistory[i] = _periodHistory[i];
     }
@@ -337,15 +341,16 @@ void PumpTachometer::update() {
     portEXIT_CRITICAL(&_mux);
 
     const int64_t nowUs = esp_timer_get_time();
-    const bool captureActiveRecent =
-        captureActiveRaw && (lastAcceptedEdgeUs != 0) &&
+    const bool captureRecentActivity =
+        _captureEnabled && lastAcceptedEdgeUs != 0 &&
         ((nowUs - lastAcceptedEdgeUs) <= static_cast<int64_t>(_config.timeoutUs));
+    const bool sampleCaptureActive = captureActive && captureRecentActivity;
 
     _sample.pulseCount = pulseCount;
     _sample.glitchRejects = glitchRejects + _softwareRejects;
     _sample.captureEnabledCfg = _captureEnabledCfg;
     _sample.captureInitOk = _captureInitOk;
-    _sample.captureActive = captureActiveRecent;
+    _sample.captureActive = sampleCaptureActive;
     _sample.captureEventCount = captureEventCount;
     _sample.captureLastPeriodUs = captureTicksToUs(captureLastPeriodTicks);
     _sample.captureLastEdge = captureLastEdge;
@@ -455,6 +460,7 @@ void PumpTachometer::update() {
         _sample.captureActive = false;
         _sample.periodUs = 0;
         _sample.timedOut = true;
+        _sample.captureActive = false;
         _sample.rpmInst = 0.0f;
         _sample.rpmCountWindow = 0.0f;
         _sample.rpmPub = 0.0f;
