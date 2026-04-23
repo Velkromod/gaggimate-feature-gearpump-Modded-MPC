@@ -378,118 +378,75 @@ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t capt
 
     const int64_t nowUs = esp_timer_get_time();
 
-
-
     portENTER_CRITICAL_ISR(&_mux);
 
-
-
     _captureActive = _captureEnabled;
-
     _captureEventCount++;
-
     _captureLastEdge = captureEdge;
-    const uint32_t holdoffUs = computeHoldoffUs(_config, _lastPeriodUs);
 
-
-
-
-    if (_lastSeenEdgeUs != 0) {
-
-        const uint32_t dtSinceAnyEdgeUs = static_cast<uint32_t>(nowUs - _lastSeenEdgeUs);
-
-        if (holdoffUs > 0 && dtSinceAnyEdgeUs < holdoffUs) {
-
-            _lastSeenEdgeUs = nowUs;
-
-
-
-
-
-
-
-
-
-
-    if (_lastAcceptedEdgeUs != 0) {
-
-        uint32_t dtUs = 0;
-
-        uint32_t dtTicks = 0;
-
-        if (_captureEnabled) {
-
-            dtTicks = captureValue - _lastCaptureValue;
-
-            dtUs = captureTicksToUs(dtTicks);
-
-        } else {
-
-            dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
-
-        }
-
-
-
-        const uint32_t minAcceptedPeriodUs = std::max(_config.minPeriodUs, _physicalMinPeriodUs);
-
-        if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
-
-            _glitchRejects++;
-
-
-
-
-
-        if (_lastPeriodUs > 0 && dtUs > 0) {
-
-            const float ratio = static_cast<float>(dtUs) / static_cast<float>(_lastPeriodUs);
-
-            if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
-
-                _glitchRejects++;
-
-                portEXIT_CRITICAL_ISR(&_mux);
-
-                return;
-
-            }
-
-        }
-
-
-
-        _lastPeriodUs = dtUs;
-
-
-
-        _periodHistory[_periodHistoryIndex] = dtUs;
-
-        _periodHistoryIndex = static_cast<uint8_t>((_periodHistoryIndex + 1) % PERIOD_HISTORY_SIZE);
-
-        if (_periodHistoryCount < PERIOD_HISTORY_SIZE) {
-
-            _periodHistoryCount++;
-
-        }
-
+    uint32_t holdoffUs = _config.holdoffMinUs;
+    if (_lastPeriodUs > 0) {
+        const uint32_t divisor = std::max<uint32_t>(_config.holdoffPeriodDivisor, 1U);
+        holdoffUs = std::clamp(_lastPeriodUs / divisor, _config.holdoffMinUs, _config.holdoffMaxUs);
     }
 
+    if (_lastAcceptedEdgeUs != 0 && holdoffUs > 0) {
+        const uint32_t dtSinceAcceptedEdgeUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+        if (dtSinceAcceptedEdgeUs < holdoffUs) {
+            _glitchRejects++;
+            portEXIT_CRITICAL_ISR(&_mux);
+            return;
+        }
+    }
 
+    const bool hadAcceptedEdge = (_lastAcceptedEdgeUs != 0);
+    uint32_t dtUs = 0;
+    uint32_t dtTicks = 0;
+    if (hadAcceptedEdge) {
+        if (_captureEnabled) {
+            dtTicks = captureValue - _lastCaptureValue;
+            dtUs = captureTicksToUs(dtTicks);
+        } else {
+            dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+        }
 
+        const uint32_t minAcceptedPeriodUs = std::max(_config.minPeriodUs, _physicalMinPeriodUs);
+        if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
+            _glitchRejects++;
+            portEXIT_CRITICAL_ISR(&_mux);
+            return;
+        }
+
+        if (_lastPeriodUs > 0 && dtUs > 0) {
+            const float ratio = static_cast<float>(dtUs) / static_cast<float>(_lastPeriodUs);
+            if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
+                _glitchRejects++;
+                portEXIT_CRITICAL_ISR(&_mux);
+                return;
+            }
+        }
+    }
+
+    _lastSeenEdgeUs = nowUs;
     _lastCaptureValue = captureValue;
-
     _lastAcceptedEdgeUs = nowUs;
+
+    if (hadAcceptedEdge) {
+        _lastPeriodUs = dtUs;
+        if (_captureEnabled) {
+            _captureLastPeriodTicks = dtTicks;
+        }
+        _periodHistory[_periodHistoryIndex] = dtUs;
+        _periodHistoryIndex = static_cast<uint8_t>((_periodHistoryIndex + 1) % PERIOD_HISTORY_SIZE);
+        if (_periodHistoryCount < PERIOD_HISTORY_SIZE) {
+            _periodHistoryCount++;
+        }
+    }
 
     _pulseCount++;
 
-
-
     portEXIT_CRITICAL_ISR(&_mux);
-
 }
-
-
 
 uint32_t PumpTachometer::computeMedianPeriod(const uint32_t *values, size_t count) {
 
