@@ -118,19 +118,10 @@ bool PumpTachometer::begin(const Config &config) {
         }
     }
 
-    // Install ISR service exactly once. ESP_ERR_INVALID_STATE means it's already
-    // installed and is treated as success.
-    const esp_err_t isrInstallErr = gpio_install_isr_service(GPIO_ISR_SERVICE_FLAGS);
-    if (isrInstallErr != ESP_OK && isrInstallErr != ESP_ERR_INVALID_STATE) {
-        _enabled = false;
-        return false;
-    }
-
-    // Always clear any stale GPIO ISR handler first to prevent duplicates across
-    // begin() calls and to guarantee mutual exclusion with MCPWM capture.
-    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
-
     if (_captureEnabled) {
+        // MCPWM capture is active: force exclusive edge path and clean any
+        // stale GPIO ISR handler that might remain from prior begin() calls.
+        gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
         _enabled = true;
         ESP_LOGI(TAG,
                  "Edge source selected: MCPWM capture active; GPIO ISR fallback disabled "
@@ -139,7 +130,20 @@ bool PumpTachometer::begin(const Config &config) {
         return true;
     }
 
-    // Capture is unavailable: register GPIO ISR fallback as the sole edge source.
+    // Capture is unavailable: install GPIO ISR service and register fallback ISR.
+    const esp_err_t isrInstallErr = gpio_install_isr_service(GPIO_ISR_SERVICE_FLAGS);
+    if (isrInstallErr == ESP_OK) {
+        // Service installed in this call.
+    } else if (isrInstallErr == ESP_ERR_INVALID_STATE) {
+        // Service was already installed elsewhere; continue normally.
+    } else {
+        _enabled = false;
+        return false;
+    }
+
+    // Clear stale handler first to prevent duplicates across begin() calls.
+    gpio_isr_handler_remove(static_cast<gpio_num_t>(_config.pin));
+
     const esp_err_t gpioIsrAddErr = gpio_isr_handler_add(
         static_cast<gpio_num_t>(_config.pin), &PumpTachometer::isrThunk, this);
     if (gpioIsrAddErr != ESP_OK) {
