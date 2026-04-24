@@ -1,0 +1,579 @@
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.h b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+index 9a5622c..0f0c5d1 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.h
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.h
+@@ -2,7 +2,6 @@
+ #define PUMPTACHOMETER_H
+ 
+ #include <Arduino.h>
+-#include <driver/pcnt.h>
+ #include <driver/gpio.h>
+ #include <driver/mcpwm.h>
+ #include <esp_timer.h>
+@@ -28,31 +27,17 @@ class PumpTachometer {
+         bool enableHardwareGlitchFilter = true;
+         float maxStepUpRatio = 2.20f;
+         float minStepDownRatio = 0.45f;
+-        // Ignore very short re-triggers after a valid edge to suppress local ringing.
+-        uint32_t holdoffMinUs = 100;
+-        uint32_t holdoffMaxUs = 500;
+-        // Compute a robust RPM estimate from ISR-accepted pulses over a fixed window.
+-        // A wider window reduces quantization error when the signal is still noisy.
+-        uint32_t countWindowUs = 350000;
+-        // Minimum pulse count required before trusting a new count-window RPM update.
+-        uint32_t minCountWindowPulses = 8;
+-        // Period-vs-count-window relative mismatch tolerance before falling back.
+-        float qualityTolerance = 0.05f;
+-        // PCNT filter threshold in APB clock cycles (10-bit, max 1023 @ 80 MHz).
+-        uint16_t pcntFilterCycles = 1023;
+-        bool enablePcnt = true;
++        // Holdoff is anchored to the last accepted edge, not the last seen edge.
++        // Use a dynamic blanking window derived from the last accepted period.
++        uint32_t holdoffMinUs = 250;
++        uint32_t holdoffMaxUs = 8000;
++        uint8_t holdoffPeriodDivisor = 2;
+         bool enableMcpwmCapture = true;
+         uint32_t mcpwmCapturePrescale = 1;
+-        // Sanity-check PCNT raw windows against the ISR-accepted pulse count.
+-        // This catches cases where the hardware counter still overcounts because a
+-        // single tach pulse produces multiple threshold crossings that survive the
+-        // short hardware glitch filter. These thresholds are only used to label the
+-        // raw hardware counter as healthy/unhealthy; they no longer drive published RPM.
+-        float pcntLegacyMinRatio = 0.85f;
+-        float pcntLegacyMaxRatio = 1.15f;
+-        uint8_t pcntHealthyRequireGoodWindows = 3;
+-        uint8_t pcntHealthyRequireBadWindows = 2;
+     };
+ 
+     struct Sample {
+         uint32_t periodUs = 0;
+         float rpmInst = 0.0f;
+         float rpmEma = 0.0f;
+         float rpmCountWindow = 0.0f;
+         float rpmCountWindowPcntRaw = 0.0f;
+         float pcntRatio = 0.0f;
+         float rpmPub = 0.0f;
+         uint8_t rpmSource = 0;
+         bool qualityOk = false;
++        bool rpmValid = false;
++        float rpmConfidence = 0.0f;
+         bool captureEnabledCfg = false;
+         bool captureInitOk = false;
+         bool captureActive = false;
+@@ -75,7 +60,7 @@ class PumpTachometer {
+     bool isEnabled() const { return _enabled; }
+ 
+   private:
+-    static constexpr size_t PERIOD_HISTORY_SIZE = 5;
++    static constexpr size_t PERIOD_HISTORY_SIZE = 3;
+ 
+     // The ISR is intentionally tiny: timestamp the edge, reject obviously
+     // impossible pulses, then store the accepted period into a short history.
+@@ -90,7 +75,6 @@ class PumpTachometer {
+ 
+     portMUX_TYPE _mux = portMUX_INITIALIZER_UNLOCKED;
+ 
+-    volatile int64_t _lastSeenEdgeUs = 0;
+     volatile int64_t _lastAcceptedEdgeUs = 0;
+     volatile uint32_t _lastPeriodUs = 0;
+     volatile uint32_t _pulseCount = 0;
+@@ -101,18 +85,11 @@ class PumpTachometer {
+     volatile uint8_t _periodHistoryCount = 0;
+ 
+     uint32_t _softwareRejects = 0;
+     uint32_t _physicalMinPeriodUs = 0;
+     uint32_t _lastPublishedPeriodUs = 0;
+-    int64_t _lastWindowUpdateUs = 0;
+-    uint32_t _lastWindowPulseCount = 0;
+-    bool _pcntHealthy = false;
+-    uint8_t _pcntGoodWindows = 0;
+-    uint8_t _pcntBadWindows = 0;
++    uint32_t _lastConfidencePulseCount = 0;
++    uint32_t _lastConfidenceRejectCount = 0;
+ 
+-    bool _pcntEnabled = false;
+     bool _captureEnabled = false;
+     bool _captureEnabledCfg = false;
+     bool _captureInitOk = false;
+     volatile bool _captureActive = false;
+     volatile uint32_t _captureEventCount = 0;
+     volatile uint32_t _captureLastPeriodTicks = 0;
+     volatile uint32_t _captureLastEdge = 0;
+-    static constexpr pcnt_unit_t PCNT_UNIT = PCNT_UNIT_0;
+-    static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
+     static constexpr mcpwm_unit_t MCPWM_UNIT = MCPWM_UNIT_0;
+     static constexpr mcpwm_capture_channel_id_t MCPWM_CAPTURE_CHANNEL = MCPWM_SELECT_CAP0;
+     static constexpr uint32_t MCPWM_CAPTURE_HZ = 80000000UL;
+diff --git a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+index 76e58d9..9264f4a 100644
+--- a/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
++++ b/lib/GaggiMateController/src/peripherals/PumpTachometer.cpp
+@@ -12,7 +12,6 @@ uint32_t captureTicksToUs(uint32_t ticks) {
+ bool PumpTachometer::begin(const Config &config) {
+     _config = config;
+     _physicalMinPeriodUs = computePhysicalMinPeriodUs(_config.maxMechanicalRpm, _config.pulsesPerRevolution);
+-    _pcntEnabled = false;
+     _captureEnabled = false;
+     _captureEnabledCfg = _config.enableMcpwmCapture;
+     _captureInitOk = false;
+@@ -35,28 +34,6 @@ bool PumpTachometer::begin(const Config &config) {
+         return false;
+     }
+ 
+-    if (_config.enablePcnt) {
+-        const pcnt_config_t pcntConfig = {
+-            .pulse_gpio_num = static_cast<int>(_config.pin),
+-            .ctrl_gpio_num = PCNT_PIN_NOT_USED,
+-            .lctrl_mode = PCNT_MODE_KEEP,
+-            .hctrl_mode = PCNT_MODE_KEEP,
+-            .pos_mode = PCNT_COUNT_DIS,
+-            .neg_mode = PCNT_COUNT_INC,
+-            .counter_h_lim = 32767,
+-            .counter_l_lim = 0,
+-            .unit = PCNT_UNIT,
+-            .channel = PCNT_CHANNEL,
+-        };
+-
+-        if (pcnt_unit_config(&pcntConfig) == ESP_OK) {
+-            const uint16_t filterCycles = static_cast<uint16_t>(std::clamp<uint32_t>(_config.pcntFilterCycles, 0U, 1023U));
+-            if (filterCycles > 0 && pcnt_set_filter_value(PCNT_UNIT, filterCycles) == ESP_OK) {
+-                pcnt_filter_enable(PCNT_UNIT);
+-            }
+-            pcnt_counter_pause(PCNT_UNIT);
+-            pcnt_counter_clear(PCNT_UNIT);
+-            pcnt_counter_resume(PCNT_UNIT);
+-            _pcntEnabled = true;
+-        }
+-    }
+-
+ #if PUMP_TACH_HAS_GPIO_FILTER
+     if (_config.enableHardwareGlitchFilter) {
+         gpio_pin_glitch_filter_config_t filterConfig = {
+@@ -100,7 +77,6 @@ uint32_t PumpTachometer::computePhysicalMinPeriodUs(float maxMechanicalRpm, floa
+ 
+ void PumpTachometer::reset() {
+     portENTER_CRITICAL(&_mux);
+-    _lastSeenEdgeUs = 0;
+     _lastAcceptedEdgeUs = 0;
+     _lastPeriodUs = 0;
+     _pulseCount = 0;
+@@ -114,24 +90,17 @@ void PumpTachometer::reset() {
+     portEXIT_CRITICAL(&_mux);
+ 
+     _softwareRejects = 0;
+     _lastPublishedPeriodUs = 0;
+-    _lastWindowUpdateUs = 0;
+-    _lastWindowPulseCount = 0;
+-    _pcntHealthy = false;
+-    _pcntGoodWindows = 0;
+-    _pcntBadWindows = 0;
++    _lastConfidencePulseCount = 0;
++    _lastConfidenceRejectCount = 0;
+     _lastCaptureValue = 0;
+     _captureActive = false;
+     _captureEventCount = 0;
+     _captureLastPeriodTicks = 0;
+     _captureLastEdge = 0;
+     _sample = {};
+-
+-    if (_pcntEnabled) {
+-        pcnt_counter_pause(PCNT_UNIT);
+-        pcnt_counter_clear(PCNT_UNIT);
+-        pcnt_counter_resume(PCNT_UNIT);
+-    }
+ }
+ 
+ void IRAM_ATTR PumpTachometer::isrThunk(void *arg) {
+     static_cast<PumpTachometer *>(arg)->onEdgeIsr();
+@@ -150,40 +119,46 @@ void IRAM_ATTR PumpTachometer::onEdgeIsr() {
+ void IRAM_ATTR PumpTachometer::onCaptureIsr(uint32_t captureValue, uint32_t captureEdge) {
+     const int64_t nowUs = esp_timer_get_time();
+ 
+     portENTER_CRITICAL_ISR(&_mux);
+ 
+-    _captureActive = _captureEnabled;
+-    _captureEventCount++;
+-    _captureLastEdge = captureEdge;
+-
+-    uint32_t holdoffUs = _config.holdoffMinUs;
+-    if (_lastPeriodUs > 0) {
+-        holdoffUs = std::clamp(_lastPeriodUs / 20U, _config.holdoffMinUs, _config.holdoffMaxUs);
++    if (_captureEnabled) {
++        _captureActive = true;
++        _captureEventCount++;
++        _captureLastEdge = captureEdge;
+     }
+ 
+-    if (_lastSeenEdgeUs != 0) {
+-        const uint32_t dtSinceAnyEdgeUs = static_cast<uint32_t>(nowUs - _lastSeenEdgeUs);
+-        if (holdoffUs > 0 && dtSinceAnyEdgeUs < holdoffUs) {
+-            _glitchRejects++;
+-            portEXIT_CRITICAL_ISR(&_mux);
+-            return;
+-        }
+-    }
+-
+-    if (_lastAcceptedEdgeUs != 0) {
++    if (_lastAcceptedEdgeUs != 0) {
+         uint32_t dtUs = 0;
+         if (_captureEnabled) {
+             const uint32_t dtTicks = captureValue - _lastCaptureValue;
+             _captureLastPeriodTicks = dtTicks;
+             dtUs = captureTicksToUs(dtTicks);
+         } else {
+             _captureLastPeriodTicks = 0;
+             dtUs = static_cast<uint32_t>(nowUs - _lastAcceptedEdgeUs);
+         }
+ 
++        uint32_t holdoffUs = _config.holdoffMinUs;
++        if (_lastPeriodUs > 0) {
++            const uint32_t divisor =
++                std::max<uint32_t>(static_cast<uint32_t>(_config.holdoffPeriodDivisor), 1U);
++            holdoffUs = std::clamp(_lastPeriodUs / divisor, _config.holdoffMinUs, _config.holdoffMaxUs);
++        }
++
++        if (holdoffUs > 0 && dtUs < holdoffUs) {
++            _glitchRejects++;
++            portEXIT_CRITICAL_ISR(&_mux);
++            return;
++        }
++
+         const uint32_t minAcceptedPeriodUs = std::max(_config.minPeriodUs, _physicalMinPeriodUs);
+         if (minAcceptedPeriodUs > 0 && dtUs < minAcceptedPeriodUs) {
+             _glitchRejects++;
+             portEXIT_CRITICAL_ISR(&_mux);
+             return;
+         }
+@@ -229,89 +204,55 @@ void PumpTachometer::update() {
+     uint32_t glitchRejects = 0;
+     uint32_t periodHistory[PERIOD_HISTORY_SIZE] = {0};
+     uint8_t periodHistoryCount = 0;
++    bool captureActive = false;
++    uint32_t captureEventCount = 0;
++    uint32_t captureLastPeriodTicks = 0;
++    uint32_t captureLastEdge = 0;
+ 
+     portENTER_CRITICAL(&_mux);
+     lastAcceptedEdgeUs = _lastAcceptedEdgeUs;
+     lastPeriodUs = _lastPeriodUs;
+     pulseCount = _pulseCount;
+     glitchRejects = _glitchRejects;
+     periodHistoryCount = _periodHistoryCount;
++    captureActive = _captureActive;
++    captureEventCount = _captureEventCount;
++    captureLastPeriodTicks = _captureLastPeriodTicks;
++    captureLastEdge = _captureLastEdge;
+     for (size_t i = 0; i < PERIOD_HISTORY_SIZE; ++i) {
+         periodHistory[i] = _periodHistory[i];
+     }
+     portEXIT_CRITICAL(&_mux);
+ 
+     const int64_t nowUs = esp_timer_get_time();
+ 
++    // Deprecated compatibility placeholders after removing PCNT from the RPM path.
++    _sample.rpmCountWindow = 0.0f;
++    _sample.rpmCountWindowPcntRaw = 0.0f;
++    _sample.pcntRatio = 0.0f;
++    _sample.pcntHealthy = false;
++
+     _sample.pulseCount = pulseCount;
+-    _sample.glitchRejects = glitchRejects + _softwareRejects;
++    _sample.glitchRejects = glitchRejects;
+     _sample.captureEnabledCfg = _captureEnabledCfg;
+     _sample.captureInitOk = _captureInitOk;
+-    _sample.captureActive = _captureActive;
+-    _sample.captureEventCount = _captureEventCount;
+-    _sample.captureLastPeriodUs = captureTicksToUs(_captureLastPeriodTicks);
+-    _sample.captureLastEdge = _captureLastEdge;
+-
+-    if (_lastWindowUpdateUs == 0) {
+-        _lastWindowUpdateUs = nowUs;
+-        _lastWindowPulseCount = pulseCount;
+-        if (_pcntEnabled) {
+-            pcnt_counter_pause(PCNT_UNIT);
+-            pcnt_counter_clear(PCNT_UNIT);
+-            pcnt_counter_resume(PCNT_UNIT);
+-        }
+-    } else {
+-        const int64_t windowElapsedUs = nowUs - _lastWindowUpdateUs;
+-        if (windowElapsedUs >= static_cast<int64_t>(_config.countWindowUs)) {
+-            const uint32_t deltaPulsesAccepted = pulseCount - _lastWindowPulseCount;
+-            uint32_t deltaPulsesPcntRaw = 0;
+-            if (_pcntEnabled) {
+-                int16_t pcntCount = 0;
+-                pcnt_counter_pause(PCNT_UNIT);
+-                if (pcnt_get_counter_value(PCNT_UNIT, &pcntCount) == ESP_OK && pcntCount > 0) {
+-                    deltaPulsesPcntRaw = static_cast<uint32_t>(pcntCount);
+-                }
+-                pcnt_counter_clear(PCNT_UNIT);
+-                pcnt_counter_resume(PCNT_UNIT);
+-            }
+-
+-            if (deltaPulsesAccepted >= _config.minCountWindowPulses) {
+-                _sample.rpmCountWindow =
+-                    (static_cast<float>(deltaPulsesAccepted) * 60000000.0f) /
+-                    (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
+-            } else if (deltaPulsesAccepted == 0) {
+-                _sample.rpmCountWindow = 0.0f;
+-            }
+-
+-            if (deltaPulsesPcntRaw >= _config.minCountWindowPulses) {
+-                _sample.rpmCountWindowPcntRaw =
+-                    (static_cast<float>(deltaPulsesPcntRaw) * 60000000.0f) /
+-                    (_config.pulsesPerRevolution * static_cast<float>(windowElapsedUs));
+-            } else if (deltaPulsesPcntRaw == 0) {
+-                _sample.rpmCountWindowPcntRaw = 0.0f;
+-            }
+-
+-            _sample.pcntRatio = 0.0f;
+-            bool pcntWindowHealthy = false;
+-            if (_pcntEnabled && deltaPulsesAccepted >= _config.minCountWindowPulses && deltaPulsesPcntRaw > 0) {
+-                _sample.pcntRatio = static_cast<float>(deltaPulsesPcntRaw) / static_cast<float>(std::max<uint32_t>(deltaPulsesAccepted, 1U));
+-                pcntWindowHealthy = (_sample.pcntRatio >= _config.pcntLegacyMinRatio) &&
+-                                    (_sample.pcntRatio <= _config.pcntLegacyMaxRatio);
+-            }
+-
+-            if (_pcntEnabled) {
+-                if (pcntWindowHealthy) {
+-                    _pcntGoodWindows = static_cast<uint8_t>(std::min<uint32_t>(_pcntGoodWindows + 1U, 255U));
+-                    _pcntBadWindows = 0;
+-                    if (_pcntGoodWindows >= _config.pcntHealthyRequireGoodWindows) {
+-                        _pcntHealthy = true;
+-                    }
+-                } else {
+-                    if (deltaPulsesPcntRaw > 0 && deltaPulsesAccepted >= _config.minCountWindowPulses) {
+-                        _softwareRejects++;
+-                    }
+-                    _pcntBadWindows = static_cast<uint8_t>(std::min<uint32_t>(_pcntBadWindows + 1U, 255U));
+-                    _pcntGoodWindows = 0;
+-                    if (_pcntBadWindows >= _config.pcntHealthyRequireBadWindows) {
+-                        _pcntHealthy = false;
+-                    }
+-                }
+-            } else {
+-                _pcntHealthy = false;
+-            }
+-            _sample.pcntHealthy = _pcntHealthy;
+-
+-            _lastWindowUpdateUs = nowUs;
+-            _lastWindowPulseCount = pulseCount;
+-        }
+-    }
++    _sample.captureActive = captureActive;
++    _sample.captureEventCount = captureEventCount;
++    _sample.captureLastPeriodUs = _captureEnabled ? captureTicksToUs(captureLastPeriodTicks) : 0U;
++    _sample.captureLastEdge = captureLastEdge;
+ 
+     if (lastAcceptedEdgeUs == 0 || lastPeriodUs == 0 || periodHistoryCount == 0) {
+         _sample.periodUs = 0;
+         _sample.timedOut = true;
+         _sample.rpmInst = 0.0f;
+-        _sample.rpmPub = _sample.rpmCountWindow;
+-        _sample.rpmEma = (_sample.rpmPub > 0.0f) ? _sample.rpmPub : 0.0f;
+-        _sample.rpmSource = (_sample.rpmPub > 0.0f) ? 2 : 0;
+-        _sample.qualityOk = (_sample.rpmPub > 0.0f);
+-        _sample.pcntHealthy = _pcntHealthy;
++        _sample.rpmPub = 0.0f;
++        _sample.rpmEma = 0.0f;
++        _sample.rpmSource = 0;
++        _sample.qualityOk = false;
++        _sample.rpmValid = false;
++        _sample.rpmConfidence = 0.0f;
+         return;
+     }
+ 
+@@ -320,36 +261,54 @@ void PumpTachometer::update() {
+         _sample.periodUs = 0;
+         _sample.timedOut = true;
+         _sample.rpmInst = 0.0f;
+-        _sample.rpmCountWindow = 0.0f;
+         _sample.rpmPub = 0.0f;
+         _sample.rpmEma = 0.0f;
+-        _sample.rpmCountWindowPcntRaw = 0.0f;
+-        _sample.pcntRatio = 0.0f;
+         _sample.rpmSource = 0;
+         _sample.qualityOk = false;
+-        _sample.pcntHealthy = _pcntHealthy;
++        _sample.rpmValid = false;
++        _sample.rpmConfidence = 0.0f;
+         return;
+     }
+ 
+     uint32_t candidatePeriodUs = computeMedianPeriod(periodHistory, periodHistoryCount);
++    bool plausibilityRejected = false;
+ 
+     // Reject abrupt single-update jumps that are much larger than the last
+     // reported value. Median filtering already removes isolated spikes, and this
+     // plausibility gate catches the remaining occasional missed/extra periods.
+     if (_lastPublishedPeriodUs > 0 && candidatePeriodUs > 0) {
+         const float ratio = static_cast<float>(candidatePeriodUs) / static_cast<float>(_lastPublishedPeriodUs);
+         if (ratio > _config.maxStepUpRatio || ratio < _config.minStepDownRatio) {
+             candidatePeriodUs = _lastPublishedPeriodUs;
+             _softwareRejects++;
++            plausibilityRejected = true;
+         }
+     }
+ 
+     _lastPublishedPeriodUs = candidatePeriodUs;
+     _sample.periodUs = candidatePeriodUs;
+     _sample.timedOut = false;
+     _sample.rpmInst = 60000000.0f / (_config.pulsesPerRevolution * static_cast<float>(candidatePeriodUs));
++    _sample.rpmPub = _sample.rpmInst;
++    _sample.rpmSource = _captureEnabled ? 1 : 2;
+ 
+-    const bool countWindowReady = _sample.rpmCountWindow > 0.0f;
+-    const float comparisonDenominator = std::max(_sample.rpmCountWindow, 100.0f);
+-    const float mismatch = countWindowReady ? std::fabs(_sample.rpmInst - _sample.rpmCountWindow) / comparisonDenominator : 0.0f;
+-
+-    if (countWindowReady && mismatch > _config.qualityTolerance) {
+-        // Prefer the count-window RPM whenever the instantaneous period branch
+-        // still disagrees materially with the robust frequency estimate.
+-        _sample.rpmPub = _sample.rpmCountWindow;
+-        _sample.rpmSource = 2;
+-        _sample.qualityOk = false;
+-    } else {
+-        _sample.rpmPub = _sample.rpmInst;
+-        _sample.rpmSource = 1;
+-        _sample.qualityOk = countWindowReady;
+-    }
+-
+-    _sample.pcntHealthy = _pcntHealthy;
++    const uint32_t totalRejects = glitchRejects + _softwareRejects;
++    const uint32_t deltaAccepted = pulseCount - _lastConfidencePulseCount;
++    const uint32_t deltaRejects = totalRejects - _lastConfidenceRejectCount;
++    _lastConfidencePulseCount = pulseCount;
++    _lastConfidenceRejectCount = totalRejects;
++
++    float recentAcceptRatio = 1.0f;
++    const uint32_t deltaEvents = deltaAccepted + deltaRejects;
++    if (deltaEvents > 0) {
++        recentAcceptRatio =
++            static_cast<float>(deltaAccepted) / static_cast<float>(deltaEvents);
++    }
++
++    float confidence = _captureEnabled ? 1.0f : 0.70f;
++    if (periodHistoryCount < PERIOD_HISTORY_SIZE) {
++        confidence *= 0.50f;
++    }
++    confidence *= std::clamp(recentAcceptRatio, 0.0f, 1.0f);
++    if (plausibilityRejected) {
++        confidence *= 0.65f;
++    }
++    const float ageNorm =
++        std::clamp(static_cast<float>(nowUs - lastAcceptedEdgeUs) /
++                       static_cast<float>(std::max<uint32_t>(_config.timeoutUs, 1U)),
++                   0.0f, 1.0f);
++    confidence *= (1.0f - 0.50f * ageNorm);
++
++    _sample.rpmConfidence = std::clamp(confidence, 0.0f, 1.0f);
++    _sample.rpmValid =
++        (periodHistoryCount >= PERIOD_HISTORY_SIZE) &&
++        (_sample.periodUs > 0) &&
++        (_sample.rpmConfidence >= 0.35f);
++    _sample.qualityOk = _sample.rpmValid;
++    _sample.glitchRejects = totalRejects;
+ 
+     if (_sample.rpmEma <= 0.0f) {
+         _sample.rpmEma = _sample.rpmPub;
+@@ -358,5 +317,4 @@ void PumpTachometer::update() {
+         // raw instantaneous and count-window estimates remain available.
+         _sample.rpmEma += _config.emaAlpha * (_sample.rpmPub - _sample.rpmEma);
+     }
+ }
+-
+diff --git a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+index da5580b..7f1e2d0 100644
+--- a/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
++++ b/lib/GaggiMateController/src/peripherals/DimmedPump.cpp
+@@ -36,7 +36,7 @@ int quantizePumpPowerForPSM(float desiredPowerPct) {
+ 
+ void printShotTelemetryLegend() {
+     printf("# SHOT START\n");
+-    printf("# legend_version=4\n");
++    printf("# legend_version=5\n");
+     printf("# time_base=ms_since_boot\n");
+     printf("# units: pressure=bar, flow=ml_s, output=percent, derivative=bar_s\n");
+     printf("# raw_p = raw pressure sensor reading\n");
+@@ -78,13 +78,15 @@ void printShotTelemetryLegend() {
+     printf("# power_quant_residual = sigma-delta residual kept for next quantization step\n");
+     printf("# tach_period_us = measured time between valid tach pulses in microseconds\n");
+     printf("# tach_rpm_inst = instantaneous RPM derived from tach_period_us and pulses-per-revolution\n");
+-    printf("# tach_rpm_ema = exponentially filtered published RPM intended for easier visual analysis\n");
+-    printf("# tach_rpm_count_window = RPM derived from ISR-accepted pulse counts over a fixed time window\n");
+-    printf("# tach_rpm_count_window_pcnt_raw = RPM derived from raw PCNT hardware counts over the same window (diagnostic only)\n");
+-    printf("# tach_pcnt_ratio = raw PCNT pulse count divided by ISR-accepted pulse count in the current window\n");
+-    printf("# tach_rpm_pub = RPM value selected for operational use after comparing period and count-window estimates\n");
+-    printf("# tach_quality_ok = 1 when period and count-window RPM agree within tolerance\n");
+-    printf("# tach_rpm_source = 0=none, 1=period branch, 2=count-window fallback\n");
++    printf("# tach_rpm_ema = exponentially filtered published RPM intended for easier visual analysis\n");
++    printf("# tach_rpm_count_window = deprecated compatibility placeholder; always 0 in capture-only mode\n");
++    printf("# tach_rpm_count_window_pcnt_raw = deprecated compatibility placeholder; always 0 in capture-only mode\n");
++    printf("# tach_pcnt_ratio = deprecated compatibility placeholder; always 0 in capture-only mode\n");
++    printf("# tach_rpm_pub = RPM value selected for estimator/telemetry use from the capture-only path\n");
++    printf("# tach_quality_ok = legacy alias of tach_rpm_valid for compatibility\n");
++    printf("# tach_rpm_source = 0=none, 1=MCPWM capture path, 2=gpio/esp_timer fallback path\n");
++    printf("# tach_rpm_valid = 1 when the published RPM is considered valid for estimator use\n");
++    printf("# tach_rpm_confidence = 0..1 confidence score for the published RPM\n");
+     printf("# tach_pulse_count = total number of valid tach pulses seen since the last reset\n");
+     printf("# tach_glitch_rejects = number of tach edges rejected as implausibly fast glitches or plausibility failures\n");
+-    printf("# tach_pcnt_healthy = 1 when raw PCNT windows have matched ISR-accepted windows for multiple consecutive updates\n");
++    printf("# tach_pcnt_healthy = deprecated compatibility placeholder; always 0 in capture-only mode\n");
+     printf("# tach_capture_enabled_cfg = 1 when MCPWM capture is enabled by configuration\n");
+     printf("# tach_capture_init_ok = 1 when MCPWM capture initialized successfully\n");
+     printf("# tach_capture_active = 1 after MCPWM capture has observed events in this run\n");
+@@ -95,7 +97,7 @@ void printShotTelemetryLegend() {
+     printf("ms,raw_p,flt_p,sp_raw,sp_flt,sp_recipe,sp_ctrl,sp_flt_d,ctrl_out,pump_duty,pump_flow,coffee_flow,"
+            "u_raw,u_applied,u_delta,limiter_active_up,limiter_active_down,error_integral,"
+            "u_unclamped_raw,u_clamped_raw,u_clamp_delta,clamp_active_high,clamp_active_low,"
+            "u_fb,u_ff_hold,u_ff_dyn,u_ff_dyn_raw,ff_pressure_w,ff_above_w,ff_gamma,u_ff_total,ramp_hold_active,drop_rate_active,"
+            "mpc_shadow_enabled,mpc_u_shadow,mpc_u_ss,mpc_u_trim,mpc_p1_pred,mpc_pn_pred,mpc_qout_est,mpc_qout_raw,mpc_residual,mpc_residual_bias,mpc_cost,"
+            "power_cmd,power_psm_quantized,power_quant_residual,"
+-           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_capture_enabled_cfg,tach_capture_init_ok,tach_capture_active,tach_capture_event_count,tach_capture_last_period_us,tach_capture_last_edge,tach_timeout\n");
++           "tach_period_us,tach_rpm_inst,tach_rpm_ema,tach_rpm_count_window,tach_rpm_count_window_pcnt_raw,tach_pcnt_ratio,tach_rpm_pub,tach_quality_ok,tach_rpm_source,tach_rpm_valid,tach_rpm_confidence,tach_pulse_count,tach_glitch_rejects,tach_pcnt_healthy,tach_capture_enabled_cfg,tach_capture_init_ok,tach_capture_active,tach_capture_event_count,tach_capture_last_period_us,tach_capture_last_edge,tach_timeout\n");
+ }
+ } // namespace
+ 
+@@ -174,13 +176,10 @@ void DimmedPump::setup() {
+         tachoConfig.timeoutUs = 300000;
+         tachoConfig.minPeriodUs = 6000;
+         tachoConfig.maxMechanicalRpm = 5000.0f;
+         tachoConfig.emaAlpha = 0.20f;
+         tachoConfig.enableHardwareGlitchFilter = true;
+-        tachoConfig.maxStepUpRatio = 2.20f;
+-        tachoConfig.minStepDownRatio = 0.45f;
+-        tachoConfig.holdoffMinUs = 100;
+-        tachoConfig.holdoffMaxUs = 500;
+-        tachoConfig.countWindowUs = 350000;
+-        tachoConfig.minCountWindowPulses = 8;
+-        tachoConfig.qualityTolerance = 0.05f;
+-        tachoConfig.pcntFilterCycles = 1023;
+-        tachoConfig.enablePcnt = true;
++        tachoConfig.maxStepUpRatio = 1.80f;
++        tachoConfig.minStepDownRatio = 0.55f;
++        tachoConfig.holdoffMinUs = 250;
++        tachoConfig.holdoffMaxUs = 8000;
++        tachoConfig.holdoffPeriodDivisor = 2;
+         tachoConfig.enableMcpwmCapture = true;
+         tachoConfig.mcpwmCapturePrescale = 1;
+ 
+@@ -243,7 +242,7 @@ void DimmedPump::loop() {
+                 "%lu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.4f,%.3f,%.3f,"
+                 "%.2f,%.2f,%.2f,%d,%d,%.5f,"
+                 "%.2f,%.2f,%.2f,%d,%d,"
+                 "%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.2f,%d,%.2f,"
+                 "%d,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,"
+                 "%.2f,%d,%.4f,"
+-                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%u,%u,%d,%d,%d,%d,%u,%u,%u,%d\n",
++                "%u,%.2f,%.2f,%.2f,%.2f,%.3f,%.2f,%d,%u,%d,%.3f,%u,%u,%d,%d,%d,%d,%u,%u,%u,%d\n",
+                 now,
+                 _pressureController.getRawPressure(),
+                 _pressureController.getFilteredPressure(),
+@@ -300,6 +299,8 @@ void DimmedPump::loop() {
+                 tach.rpmPub,
+                 tach.qualityOk ? 1 : 0,
+                 tach.rpmSource,
++                tach.rpmValid ? 1 : 0,
++                tach.rpmConfidence,
+                 tach.pulseCount,
+                 tach.glitchRejects,
+                 tach.pcntHealthy ? 1 : 0,

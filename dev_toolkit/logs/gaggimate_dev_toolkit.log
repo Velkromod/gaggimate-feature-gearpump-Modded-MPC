@@ -83,3 +83,5 @@
 [2026-04-21 20:57:22] [INFO] Fin telemetria
 [2026-04-21 21:22:02] [INFO] Patch aplicado: 0007-fix-mcpwm-telemetry-column-mismatch.patch
 [2026-04-22 06:53:59] [ERROR] El patch no aplica limpio.
+[2026-04-23 19:34:31] [INFO] Inicio telemetria: COM=COM5, Baud=115200, OutDir=.\shots, Profile=Flat_9bar_Debug
+[2026-04-23 19:34:31] [INFO] Serial probe OK for COM5
